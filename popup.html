@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SnapMD</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="snapmd-popup">
+
+  <!-- ==================== HEADER ==================== -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon" aria-hidden="true">
+        <img src="icons/icon-48.png" width="18" height="18" alt="SnapMD" style="border-radius: 3px; display: block;">
+      </div>
+      <span class="brand-title">SnapMD</span>
+      <span class="version-tag">v1.2</span>
+    </div>
+
+    <div class="status-indicator ready" id="statusPill" role="status">
+      <span class="status-dot"></span>
+      <span class="status-label" id="statusLabel">Pronto</span>
+    </div>
+  </header>
+
+  <!-- ==================== TELEMETRY BAR ==================== -->
+  <section class="telemetry-bar">
+    <div class="context-badge" id="contextTag">
+      <span class="context-icon" id="contextIcon">📄</span>
+      <span class="context-text" id="contextLabel">Varrendo DOM...</span>
+    </div>
+
+    <div class="metrics-group">
+      <span class="metric-item"><strong id="metricLines">0</strong> lin</span>
+      <span class="metric-sep">·</span>
+      <span class="metric-item"><strong id="metricWords">0</strong> pal</span>
+      <span class="metric-sep">·</span>
+      <span class="metric-item"><strong id="metricSize">0.0</strong> KB</span>
+    </div>
+  </section>
+
+  <!-- ==================== TACTILE ACTION BAR ==================== -->
+  <section class="action-bar">
+    <button class="btn btn-primary" id="btnCopy" title="Copiar Markdown (Ctrl+Enter)">
+      <svg class="btn-icon icon-copy" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+      <svg class="btn-icon icon-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:none;">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      <span class="btn-text">Copiar Markdown</span>
+      <kbd class="btn-shortcut">⌃↵</kbd>
+    </button>
+
+    <button class="btn btn-secondary" id="btnDownload" title="Baixar arquivo .md (Ctrl+S)">
+      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+      <span class="btn-text">Baixar</span>
+      <kbd class="btn-shortcut">⌃S</kbd>
+    </button>
+  </section>
+
+  <!-- ==================== CONTENT VIEWPORT / STATES ==================== -->
+  <main class="preview-container" id="previewContainer">
+    
+    <!-- Estado: Sucesso (Preview de Código) -->
+    <pre class="markdown-preview" id="markdownPreview"><code>Carregando...</code></pre>
+
+    <!-- Estado: Skeleton (Loading) -->
+    <div class="state-skeleton" id="skeletonState" style="display: none;">
+      <div class="skeleton-line w-60"></div>
+      <div class="skeleton-line w-90"></div>
+      <div class="skeleton-line w-75"></div>
+      <div class="skeleton-block"></div>
+      <div class="skeleton-line w-50"></div>
+      <div class="skeleton-line w-80"></div>
+    </div>
+
+    <!-- Estado: Erro -->
+    <div class="state-message state-error" id="errorState" style="display: none;">
+      <div class="error-badge">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+      </div>
+      <h3 class="message-title" id="errorMessageTitle">Falha de Leitura</h3>
+      <p class="message-desc" id="errorMessageDesc">Páginas internas do navegador ou abas abertas antes da instalação precisam ser recarregadas.</p>
+      <button class="btn btn-secondary btn-sm" id="btnReloadTab">Recarregar Página (F5)</button>
+    </div>
+
+    <!-- Toast HUD de Feedback de Cópia -->
+    <div class="toast-hud" id="toastHud" role="alert" aria-live="polite">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      <span id="toastHudText">Markdown copiado com sucesso</span>
+    </div>
+
+  </main>
+
+  <!-- ==================== FOOTER ==================== -->
+  <footer class="app-footer">
+    <div class="footer-shortcuts">
+      <span class="shortcut-hint"><kbd>⌃↵</kbd> Copiar</span>
+      <span class="shortcut-hint"><kbd>⌃S</kbd> Baixar</span>
+      <span class="shortcut-hint"><kbd>Esc</kbd> Fechar</span>
+    </div>
+    <div class="privacy-tag" title="Toda extração ocorre 100% no seu navegador sem envio para servidores externos">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+      <span>100% Local</span>
+    </div>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

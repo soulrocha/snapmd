@@ -22,13 +22,15 @@ const playwright = require("playwright");
  assert.ok(md.includes('\\*\\*texto\\*\\*') && md.includes('ação\n'));
  assert.equal(await page.content(),before,'Extraction must not mutate the DOM');
  const edge = await browser.newPage();
- await edge.setContent(`<div role="dialog" style="display:none"><h2>Login fechado</h2></div><div role="dialog"><h2>Confirmação aberta</h2><p>Deseja continuar?</p></div><form><div role="switch" aria-checked="true" aria-label="Notificações"><input type="checkbox" style="display:none"></div><p-inputswitch class="p-inputswitch-checked"><span>Modo escuro</span><input type="checkbox" checked style="display:none"></p-inputswitch><fieldset><legend>Perfil</legend><p>Regime de contratação</p><label><input type="radio" name="employment" value="clt" checked>CLT</label><label><input type="radio" name="employment" value="pj">PJ</label><p>Benefícios desejados</p><label><input type="checkbox" name="benefits" checked>Vale-refeição</label><label><input type="checkbox" name="benefits">Plano de saúde</label></fieldset></form><div style="display:contents">Texto em contents <span>e filho</span></div>`);
+ await edge.setContent(`<div role="dialog" style="display:none"><h2>Login fechado</h2></div><div role="dialog"><h2>Confirmação aberta</h2><p>Deseja continuar?</p></div><form><div role="switch" aria-checked="true" aria-label="Notificações"><input type="checkbox" style="display:none"></div><p-inputswitch class="p-inputswitch-checked"><span>Modo escuro</span><input type="checkbox" checked style="display:none"></p-inputswitch><fieldset><legend>Perfil</legend><p>Regime de contratação</p><label><input type="radio" name="employment" value="clt" checked>CLT</label><label><input type="radio" name="employment" value="pj">PJ</label><p>Benefícios desejados</p><label><input type="checkbox" name="benefits" checked>Vale-refeição</label><label><input type="checkbox" name="benefits">Plano de saúde</label></fieldset></form><fieldset><legend>Contato preferido</legend><label><input type="radio" name="contact" value="email" checked>Email</label><label><input type="radio" name="contact" value="phone">Telefone</label><label><input type="checkbox" name="consent">Aceito contato</label></fieldset><input type="text" role="checkbox" aria-checked="true" aria-label="Assinar novidades"><div style="display:contents">Texto em contents <span>e filho</span></div>`);
  const edgeMd = (await edge.evaluate(source)).markdown;
  assert.ok(edgeMd.includes('Diálogo / Modal Ativo: Confirmação aberta'), 'first visible dialog');
  assert.ok(/### Notificações\n\nMarcado \(true\)/.test(edgeMd), 'switch wrapper with hidden native input');
  assert.ok(/### Modo escuro\n\nMarcado \(true\)/.test(edgeMd), 'p-inputswitch wrapper state');
  assert.ok(/### Regime de contratação\n\n- \[x\] CLT\n- \[ \] PJ\n/.test(edgeMd), 'radio question');
  assert.ok(/### Benefícios desejados\n\n- \[x\] Vale-refeição\n- \[ \] Plano de saúde/.test(edgeMd), 'separate checkbox question');
+ assert.ok(/### Contato preferido\n\n- \[x\] Email\n- \[ \] Telefone\n/.test(edgeMd), 'mixed fieldset keeps legend');
+ assert.ok(edgeMd.includes('- [x] Assinar novidades'), 'ARIA checkbox on input');
  assert.ok(edgeMd.includes('Texto em contents') && edgeMd.includes('e filho'), 'display: contents text');
  await edge.close();
 

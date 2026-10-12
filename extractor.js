@@ -113,7 +113,7 @@
         return null;
     }
     function isChecked(el) {
-        if (el.tagName === 'INPUT') return el.checked;
+        if (el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(el.type)) return el.checked;
         if (el.getAttribute('aria-checked') === 'true') return true;
         if (el.getAttribute('aria-checked') === 'false') return false;
         const native = el.querySelector?.('input[type="checkbox"], input[type="radio"]');
@@ -687,7 +687,9 @@
                     } else if (members.length > 1) {
                         groupTitle = titleIn(inp.closest('.form-group, [data-question], [class*="question"], [class*="field"]'));
                     }
-                    const legend = mixed ? null : container?.querySelector(':scope > legend');
+                    // In a mixed fieldset the legend still names the first question when nothing closer does.
+                    const leadsContainer = !mixed || !Array.from(container.querySelectorAll(CHOICE_SELECTOR)).some(el => eligible(el) && !members.includes(el) && (el.compareDocumentPosition(inp) & Node.DOCUMENT_POSITION_FOLLOWING));
+                    const legend = leadsContainer ? container?.querySelector(':scope > legend') : null;
                     const question = groupTitle ? { text: groupTitle.innerText, nodes: [groupTitle] } : legend ? { text: legend.innerText, nodes: [legend] } : container && !mixed ? labelInfo(container) : labelInfo(inp);
                     consumeLabel(question);
                     const options = members.map(el => {

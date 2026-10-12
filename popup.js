@@ -82,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const link = document.createElement('a');
     link.href = url;
     const title = (data.title || 'pagina').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0,100) || 'pagina';
-    link.download = `${title}.md`;
+    link.download = `${title}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.md`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     status.textContent = 'Download solicitado';

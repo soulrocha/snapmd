@@ -25,6 +25,7 @@
                 '.azc-toolbar',
                 '.fxc-commandBar',
                 'form',
+                'input', 'textarea', 'select', '[role="radio"]', '[role="checkbox"]', '[role="switch"]',
                 '.monaco-editor',
                 '.terminal',
                 'pre',
@@ -33,7 +34,7 @@
         }
 
         isClaimed(el) {
-            return !el || this.claimedNodes.has(el);
+            return !el || !isVisible(el) || this.claimedNodes.has(el);
         }
 
         claim(el, owner) {
@@ -95,58 +96,41 @@
         return text;
     }
 
-    function resolveHumanLabel(inp, val) {
-        if (!inp) return '';
-        let label = '';
-
-        if (inp.id) {
-            const lbl = document.querySelector(`label[for="${inp.id}"]`);
-            if (lbl) label = (lbl.innerText || '').trim();
+    const CONTROL_SELECTOR = 'input, select, textarea, [role="switch"], [role="checkbox"], [role="radio"], por-switch-field, p-inputswitch';
+    function isVisible(el) {
+        if (!el || el.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+        for (let node = el; node; node = node.parentElement) {
+            const style = getComputedStyle(node);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
         }
-
-        if (!label) {
-            const parentGroup = inp.closest('.azc-form-group, .form-group, .msportalfx-form-group, tr, [role="row"], .row, div[class*="field"], div[class*="Group"]');
-            if (parentGroup) {
-                const labelEl = parentGroup.querySelector('.azc-control-label, label, .fxc-simplelabel, th, [class*="label"], [class*="title"], strong, div[class*="Name"]');
-                if (labelEl && labelEl !== inp) {
-                    label = (labelEl.innerText || '').replace(/[\n:]/g, ' ').trim();
-                }
-            }
-        }
-
-        if (!label) {
-            const prevSibling = inp.parentElement?.previousElementSibling || inp.previousElementSibling;
-            if (prevSibling) {
-                const txt = (prevSibling.innerText || '').replace(/[\n:]/g, ' ').trim();
-                if (txt && txt.length > 1 && txt.length < 80 && !txt.includes('http')) {
-                    label = txt;
-                }
-            }
-        }
-
-        if (!label) {
-            const ariaLabel = inp.getAttribute('aria-label') || inp.getAttribute('aria-placeholder') || inp.placeholder || inp.title;
-            if (ariaLabel) label = ariaLabel.trim();
-        }
-
-        if (!label) {
-            const rawName = inp.name || inp.id || '';
-            if (rawName && !rawName.startsWith('__azc-') && !rawName.includes('textBox')) {
-                label = rawName;
-            }
-        }
-
-        if (label && val) {
-            const cleanVal = val.trim();
-            if (label.endsWith(cleanVal)) {
-                label = label.slice(0, label.length - cleanVal.length).trim();
-            } else if (label.includes(cleanVal) && label.length > cleanVal.length + 3) {
-                label = label.replace(cleanVal, '').trim();
-            }
-        }
-
-        return label.replace(/[:—\-\s]+$/, '').trim();
+        return el.getClientRects().length > 0;
     }
+    function escapeMarkdown(value) {
+        return String(value ?? '').replace(/([\\`*_{}\[\]<>|])/g, '\\$1');
+    }
+    function referencedElements(el, attribute) {
+        return (el.getAttribute(attribute) || '').split(/\s+/).filter(Boolean)
+            .map(id => el.ownerDocument.getElementById(id)).filter(Boolean);
+    }
+    function labelInfo(inp) {
+        const refs = referencedElements(inp, 'aria-labelledby');
+        if (refs.length) return { text: refs.map(el => el.innerText || el.textContent).join(' ').trim(), nodes: refs };
+        const labels = Array.from(inp.labels || []);
+        if (labels.length) return { text: labels.map(el => el.innerText || el.textContent).join(' ').trim(), nodes: labels };
+        if (inp.getAttribute('aria-label')) return { text: inp.getAttribute('aria-label').trim(), nodes: [] };
+        // Search only nearby preceding content, never a whole page/form wrapper.
+        let cursor = inp;
+        for (let depth = 0; cursor && depth < 5; depth++, cursor = cursor.parentElement) {
+            const prev = cursor.previousElementSibling;
+            if (prev && !prev.querySelector(CONTROL_SELECTOR) && !prev.matches(CONTROL_SELECTOR) && isVisible(prev)) {
+                const text = (prev.innerText || '').trim();
+                if (text && !/^(máx|max|limite)\b/i.test(text)) return { text, nodes: [prev] };
+            }
+            if (cursor.parentElement?.matches('form, main, body, fieldset, [role="group"], [role="radiogroup"]')) break;
+        }
+        return { text: inp.placeholder || inp.title || inp.name || inp.id || 'Campo sem rótulo', nodes: [] };
+    }
+    function resolveHumanLabel(inp) { return labelInfo(inp).text; }
 
     // ------------------------------------------------------------------
     // EXTRATORES MODULARES ESPECIALIZADOS
@@ -160,6 +144,9 @@
         extract: async (ctx) => {
             const bladeTitleEl = ctx.root.querySelector('.fxs-blade-title, [class*="blade-title"], h1, [role="heading"][aria-level="1"], [class*="title-text"]');
             const bladeTitle = (bladeTitleEl?.innerText || ctx.document.title || 'Sem título').replace(/✕|\n/g, ' ').trim();
+            ctx.pageTitle = bladeTitle;
+            const titleEl = bladeTitleEl;
+            if (titleEl) ctx.registry.claimDescendants(titleEl, 'metadata');
             const now = new Date().toLocaleString('pt-BR');
 
             let md = `---\ntitle: "${bladeTitle.replace(/"/g, '\\"')}"\nsource: "${ctx.url}"\ndate: "${now}"\ntags:\n  - snapmd\n  - universal-snapshot\n---\n\n`;
@@ -192,9 +179,10 @@
         },
         extract: async (ctx) => {
             const activeDialog = ctx.root.querySelector('.p-dialog:not(.p-dialog-hidden), [role="dialog"], .modal.show, div.p-dynamic-dialog, .drawer.open');
-            if (!activeDialog) return [];
+            if (!activeDialog || !isVisible(activeDialog)) return [];
 
-            ctx.registry.claim(activeDialog, 'modal');
+            const modalHeading = activeDialog.querySelector('.p-dialog-header, .p-dialog-title, h1, h2, h3');
+            if (modalHeading) ctx.registry.claimDescendants(modalHeading, 'modal');
 
             const dialogHeader = (activeDialog.querySelector('.p-dialog-header, .p-dialog-title, h1, h2, h3, [class*="header"], [class*="title"]')?.innerText || 'Diálogo Ativo').replace(/✕|\n/g, '').trim();
             let md = `## 🪟 Diálogo / Modal Ativo: ${dialogHeader}\n\n`;
@@ -229,7 +217,7 @@
             const seenBanners = new Set();
 
             notices.forEach(n => {
-                if (ctx.registry.isClaimed(n) || n.closest('nav, .fxs-sidebar-menu, .fxs-blade-content-navigation')) return;
+                if (!isVisible(n) || ctx.registry.isClaimed(n) || n.closest('nav, .fxs-sidebar-menu, .fxs-blade-content-navigation')) return;
                 ctx.registry.claimDescendantsSafely(n, 'banners');
 
                 const text = (n.innerText || n.textContent || '').replace(/✕|\n/g, ' ').replace(/\s+/g, ' ').trim();
@@ -300,7 +288,7 @@
             const actionElements = Array.from(ctx.root.querySelectorAll(
                 '.fxs-command-bar-item, .fxc-commandBar-item, .azc-toolbar-item, .fxs-toolbar button, [role="toolbar"] button, [role="toolbar"] [role="button"], button, a.btn, [role="button"]'
             )).filter(b => {
-                if (ctx.registry.isClaimed(b)) return false;
+                if (!isVisible(b) || ctx.registry.isClaimed(b)) return false;
                 if (b.closest('nav, .fxs-sidebar-menu, .fxs-blade-content-navigation, table, [role="grid"], .fxc-grid, [class*="user-menu"]')) return false;
 
                 const txt = (b.innerText || b.textContent || '').trim();
@@ -490,6 +478,7 @@
                 'nav, [role="navigation"], .fxs-sidebar-menu, .fxs-blade-content-navigation, aside.sidebar, [class*="sidebar-nav"], [class*="left-nav"]'
             )).filter(nav => {
                 // Desqualificador crítico: se for a lâmina inteira ou contiver tabelas/grids/banners, NÃO é um menu
+                if (!isVisible(nav)) return false;
                 if (nav.classList.contains('fxs-blade') || nav.classList.contains('ApplicationMenuBlade')) return false;
                 if (nav.querySelector('.fxc-grid, [role="grid"], table, .fxc-infobar, .fxs-command-bar, [role="toolbar"]')) return false;
                 return true;
@@ -590,6 +579,7 @@
             candidateRows.forEach(row => {
                 if (ctx.registry.isClaimed(row) || row.closest('table tbody, nav, .sidebar, .fxs-sidebar')) return;
 
+                if (row.querySelector(CONTROL_SELECTOR)) return;
                 const labelEl = row.querySelector('label, [class*="label"], strong, th, .bold, div[class*="name"]');
                 if (labelEl) {
                     const k = (labelEl.innerText || '').replace(/[\n:]/g, '').trim();
@@ -608,6 +598,7 @@
                         if (v && v !== k && v.length > 0 && !visitedPairs.has(pairKey)) {
                             visitedPairs.add(pairKey);
                             propPairs.push(`- **${k}:** ${v}`);
+                            ctx.registry.claimDescendants(row, 'keyvalue');
                         }
                     }
                 }
@@ -620,59 +611,95 @@
 
     // 9. Controles, Toggles e Formulários Ativos
     const FormStateExtractor = {
-        id: 'forms',
-        priority: 80,
-        canHandle: (ctx) => {
-            return !!ctx.root.querySelector('input, select, textarea, [role="switch"], [role="checkbox"], .switch input, por-switch-field, p-inputswitch');
-        },
-        extract: async (ctx) => {
-            const inputs = Array.from(ctx.root.querySelectorAll('input, select, textarea, [role="switch"], [role="checkbox"], por-switch-field, p-inputswitch'));
-            const inputStates = [];
-            const seenInputs = new Set();
-
+        id: 'forms', priority: 65,
+        canHandle: ctx => !!ctx.root.querySelector(CONTROL_SELECTOR),
+        extract: async ctx => {
+            const inputs = Array.from(ctx.root.querySelectorAll(CONTROL_SELECTOR));
+            const handled = new Set();
+            const output = [];
+            const eligible = el => isVisible(el) && !['hidden', 'password', 'submit', 'button', 'reset', 'image'].includes(el.type)
+                && !el.closest('nav, .sidebar, .fxs-sidebar');
+            function consumeLabel(info) { info.nodes.forEach(el => ctx.registry.claimDescendants(el, 'forms')); }
+            function details(el) {
+                const hints = referencedElements(el, 'aria-describedby');
+                const nearby = el.parentElement?.querySelectorAll('small, .help-text, .helper-text, [class*="helper"]') || [];
+                const nodes = Array.from(new Set([...hints, ...nearby])).filter(isVisible);
+                nodes.forEach(el => ctx.registry.claimDescendants(el, 'forms'));
+                const text = Array.from(new Set(nodes.map(el => (el.innerText || '').trim()).filter(Boolean)));
+                if (el.maxLength >= 0 && !text.some(t => t.includes(String(el.maxLength)))) text.push(`Máx. ${el.maxLength} caracteres`);
+                if (el.required || el.getAttribute('aria-required') === 'true') text.push('Obrigatório');
+                if (el.disabled || el.getAttribute('aria-disabled') === 'true') text.push('Desabilitado');
+                if (el.readOnly) text.push('Somente leitura');
+                return text.length ? '\n\n' + text.map(t => `_${escapeMarkdown(t)}_`).join(' · ') : '';
+            }
             inputs.forEach(inp => {
-                if (ctx.registry.isClaimed(inp) || inp.closest('nav, .sidebar, .fxs-sidebar') || inp.type === 'hidden') return;
+                if (handled.has(inp) || !eligible(inp)) return;
+                // Native child controls carry the live state of custom switch wrappers.
+                if (inp.querySelector(CONTROL_SELECTOR)) return;
+                handled.add(inp);
                 ctx.registry.claim(inp, 'forms');
-
-                let val = inp.value;
-                const role = inp.getAttribute('role') || '';
-
-                if (role === 'switch' || role === 'checkbox' || inp.tagName === 'POR-SWITCH-FIELD' || inp.tagName === 'P-INPUTSWITCH') {
-                    const isChecked = inp.getAttribute('aria-checked') === 'true' || 
-                                      inp.classList.contains('active') || 
-                                      inp.classList.contains('checked') || 
-                                      inp.classList.contains('p-inputswitch-checked') ||
-                                      !!inp.querySelector('input:checked');
-                    val = isChecked ? 'Marcado (true)' : 'Desmarcado (false)';
-                } else if (inp.type === 'checkbox' || inp.type === 'radio') {
-                    val = inp.checked ? 'Marcado (true)' : 'Desmarcado (false)';
+                const choice = ['radio', 'checkbox'].includes(inp.type) || ['radio', 'checkbox'].includes(inp.getAttribute('role'));
+                const container = inp.closest('fieldset, [role="radiogroup"], [role="group"]');
+                if (choice) {
+                    const group = inputs.filter(el => eligible(el) && !handled.has(el) &&
+                        (el.type === inp.type && inp.name && el.name === inp.name && el.form === inp.form && el.getRootNode() === inp.getRootNode() ||
+                         container && el.closest('fieldset, [role="radiogroup"], [role="group"]') === container && (['radio', 'checkbox'].includes(el.type) || ['radio', 'checkbox'].includes(el.getAttribute('role')))));
+                    const members = [inp, ...group];
+                    const legend = container?.querySelector(':scope > legend');
+                    const shared = members.length > 1 ? inp.closest('.form-group, [data-question], [class*="question"], [class*="field"]') : null;
+                    const groupTitle = shared ? Array.from(shared.querySelectorAll('label, p, h2, h3, h4, [class*="label"]')).find(el => !el.querySelector(CONTROL_SELECTOR) && !members.some(control => Array.from(control.labels || []).includes(el))) : null;
+                    const question = groupTitle ? { text: groupTitle.innerText, nodes: [groupTitle] } : legend ? { text: legend.innerText, nodes: [legend] } : container ? labelInfo(container) : labelInfo(inp);
+                    consumeLabel(question);
+                    const options = members.map(el => {
+                        handled.add(el); ctx.registry.claim(el, 'forms');
+                        const info = labelInfo(el); consumeLabel(info);
+                        const checked = el.checked === true || el.getAttribute('aria-checked') === 'true';
+                        return `- [${checked ? 'x' : ' '}] ${escapeMarkdown(info.text === question.text && el.value && el.value !== 'on' ? el.value : info.text)}`;
+                    });
+                    output.push(`### ${escapeMarkdown(question.text)}\n\n${options.join('\n')}${details(inp)}`);
+                    return;
                 }
-
+                const info = labelInfo(inp); consumeLabel(info);
+                let value = inp.value ?? '';
                 if (inp.tagName === 'SELECT') {
-                    const selectedOpt = inp.options[inp.selectedIndex]?.text || val;
-                    const allOpts = Array.from(inp.options).map(o => o.text.trim()).filter(Boolean);
-                    val = `Selecionado: "${selectedOpt}" (Opções: [${allOpts.join(', ')}])`;
+                    value = Array.from(inp.selectedOptions).map(opt => opt.text.trim()).join(', ') || 'Não preenchido';
+                    const options = Array.from(inp.options).map(opt => opt.text.trim());
+                    value = `Selecionado: ${value}\nOpções: ${options.join(' / ')}`;
+                } else if (inp.getAttribute('role') === 'switch') {
+                    value = inp.getAttribute('aria-checked') === 'true' ? 'Marcado (true)' : 'Desmarcado (false)';
                 }
-
-                val = (val || '').toString().trim();
-                let label = resolveHumanLabel(inp, val);
-
-                if (!label) {
-                    const prev = inp.closest('.form-group, div, label')?.innerText?.split('\n')[0]?.trim();
-                    if (prev && prev.length < 50) label = prev;
-                }
-
-                if (label && val) {
-                    const pairKey = `${label}::${val}`;
-                    if (!seenInputs.has(pairKey)) {
-                        seenInputs.add(pairKey);
-                        inputStates.push(`- **${label}:** \`${val}\``);
-                    }
-                }
+                const text = String(value).trim() ? escapeMarkdown(value) : 'Não preenchido';
+                output.push(`### ${escapeMarkdown(info.text)}\n\n${text}${details(inp)}`);
             });
+            return output.length ? [{ type: 'forms', priority: 65, markdown: '## Controles e Formulários Ativos\n\n' + output.join('\n\n') }] : [];
+        }
+    };
 
-            if (inputStates.length === 0) return [];
-            return [{ type: 'forms', priority: 80, markdown: `## ⚙️ Controles e Formulários Ativos\n\n` + inputStates.slice(0, 30).join('\n') + '\n\n' }];
+    // Preserve remaining visible text nodes without re-emitting specialized blocks.
+    const VisibleContentExtractor = {
+        id: 'content', priority: 90, canHandle: () => true,
+        extract: async ctx => {
+            const walker = ctx.document.createTreeWalker(ctx.root, NodeFilter.SHOW_TEXT);
+            const lines = [];
+            let node;
+            while ((node = walker.nextNode())) {
+                const parent = node.parentElement;
+                if (!parent || !isVisible(parent) || parent.closest('script, style, noscript, template, input, textarea, select, button, nav, [role="navigation"]')) continue;
+                let claimed = false;
+                for (let el = parent; el && el !== ctx.root; el = el.parentElement) {
+                    if (ctx.registry.isClaimed(el)) { claimed = true; break; }
+                }
+                if (claimed) continue;
+                const text = node.textContent.replace(/\s+/g, ' ').trim();
+                if (!text) continue;
+                const heading = parent.closest('h1, h2, h3, h4, h5, h6');
+                if (heading && heading.textContent.trim() === ctx.pageTitle) continue;
+                const block = parent.closest('p, li, h1, h2, h3, h4, h5, h6, div, section') || parent;
+                const previous = lines[lines.length - 1];
+                if (previous?.element === block) previous.text += ' ' + escapeMarkdown(text);
+                else lines.push({ element: block, text: escapeMarkdown(text), heading });
+            }
+            return lines.length ? [{ type: 'content', priority: 90, markdown: '## Conteúdo da Página\n\n' + lines.map(l => (l.heading ? '### ' : '') + l.text).join('\n\n') }] : [];
         }
     };
 
@@ -690,8 +717,9 @@
                 LogTerminalExtractor,
                 TableExtractor,
                 MenuTreeExtractor,
+                FormStateExtractor,
                 CorporateBladeExtractor,
-                FormStateExtractor
+                VisibleContentExtractor
             ];
         }
 
@@ -709,10 +737,14 @@
             for (const extractor of this.extractors) {
                 try {
                     if (extractor.canHandle(ctx)) {
-                        const timeoutPromise = new Promise((_, reject) => 
-                            setTimeout(() => reject(new Error(`Timeout no extrator ${extractor.id}`)), 1500)
-                        );
-                        const result = await Promise.race([extractor.extract(ctx), timeoutPromise]);
+                        let timeoutId;
+                        let result;
+                        try {
+                            const timeoutPromise = new Promise((_, reject) => {
+                                timeoutId = setTimeout(() => reject(new Error(`Timeout no extrator ${extractor.id}`)), 1500);
+                            });
+                            result = await Promise.race([extractor.extract(ctx), timeoutPromise]);
+                        } finally { clearTimeout(timeoutId); }
                         if (Array.isArray(result)) {
                             blocks.push(...result);
                         }

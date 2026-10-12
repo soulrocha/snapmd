@@ -1,221 +1,100 @@
-document.addEventListener('DOMContentLoaded', async () => {
-  const markdownPreview = document.getElementById('markdownPreview');
-  const skeletonState = document.getElementById('skeletonState');
-  const errorState = document.getElementById('errorState');
-  const errorMessageTitle = document.getElementById('errorMessageTitle');
-  const errorMessageDesc = document.getElementById('errorMessageDesc');
-  const btnReloadTab = document.getElementById('btnReloadTab');
+document.addEventListener('DOMContentLoaded', () => {
+  const popup = document.querySelector('.popup');
+  const preview = document.getElementById('markdownPreview');
+  const status = document.getElementById('status');
+  const copy = document.getElementById('btnCopy');
+  const download = document.getElementById('btnDownload');
+  const error = document.getElementById('errorState');
+  let data = null;
+  let busy = false;
+  let celebrationTimer;
 
-  const statusPill = document.getElementById('statusPill');
-  const statusLabel = document.getElementById('statusLabel');
-
-  const contextTag = document.getElementById('contextTag');
-  const contextIcon = document.getElementById('contextIcon');
-  const contextLabel = document.getElementById('contextLabel');
-
-  const metricLines = document.getElementById('metricLines');
-  const metricWords = document.getElementById('metricWords');
-  const metricSize = document.getElementById('metricSize');
-
-  const btnCopy = document.getElementById('btnCopy');
-  const btnDownload = document.getElementById('btnDownload');
-  const toastHud = document.getElementById('toastHud');
-  const toastHudText = document.getElementById('toastHudText');
-
-  let extractedData = null;
-  let activeTabId = null;
-
-  function setStatus(type, label) {
-    statusPill.className = `status-indicator ${type}`;
-    statusLabel.textContent = label;
+  function state(name, message) {
+    clearTimeout(celebrationTimer);
+    popup.className = `popup ${name}`;
+    status.textContent = message;
+    preview.setAttribute('aria-busy', String(name === 'extracting'));
+    error.hidden = name !== 'error';
+    preview.hidden = name === 'error';
+    copy.disabled = download.disabled = !data || name === 'extracting' || name === 'error';
   }
 
-  function showToast(msg = 'Markdown copiado com sucesso') {
-    toastHudText.textContent = msg;
-    toastHud.classList.add('show');
-    setTimeout(() => {
-      toastHud.classList.remove('show');
-    }, 1800);
+  function failure(title, description) {
+    data = null;
+    state('error', 'Captura indisponível');
+    document.getElementById('errorTitle').textContent = title;
+    document.getElementById('errorDescription').textContent = description;
   }
 
-  function showError(title, desc) {
-    markdownPreview.style.display = 'none';
-    skeletonState.style.display = 'none';
-    errorState.style.display = 'flex';
-    errorMessageTitle.textContent = title;
-    errorMessageDesc.textContent = desc;
-    setStatus('error', 'Falha');
-  }
-
-  const startTime = performance.now();
-
-  try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    const tab = tabs && tabs.length > 0 ? tabs[0] : null;
-
-    if (!tab || !tab.id) {
-      showError('Aba Não Encontrada', 'Nenhuma janela ou aba ativa detectada pelo navegador.');
-      return;
-    }
-
-    activeTabId = tab.id;
-    const currentUrl = (tab.url || tab.pendingUrl || '').toString();
-
-    if (currentUrl && (currentUrl.startsWith('chrome://') || currentUrl.startsWith('edge://') || currentUrl.startsWith('about:'))) {
-      showError(
-        'Página de Sistema Restrita',
-        'Por razões de segurança do navegador, extensões não têm permissão para ler abas internas (chrome:// ou edge://). Acesse uma página web e tente novamente.'
-      );
-      contextLabel.textContent = 'Página Restrita';
-      contextIcon.textContent = '🔒';
-      return;
-    }
-
-    // Exibe Skeleton se o parsing levar mais de 60ms
-    const skeletonTimer = setTimeout(() => {
-      markdownPreview.style.display = 'none';
-      skeletonState.style.display = 'flex';
-      setStatus('busy', 'Extraindo...');
-    }, 60);
-
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['extractor.js']
-    });
-
-    clearTimeout(skeletonTimer);
-    skeletonState.style.display = 'none';
-    markdownPreview.style.display = 'block';
-
-    if (results && results[0] && results[0].result) {
-      extractedData = results[0].result;
-      const mdText = (extractedData.markdown || '').toString();
-      markdownPreview.querySelector('code').textContent = mdText;
-
-      const durationMs = Math.round(performance.now() - startTime);
-      setStatus('ready', `Capturado (${durationMs}ms)`);
-
-      // Telemetria precisa com Tabular Numbers
-      const lines = mdText.split('\n').length;
-      const words = mdText.trim() ? mdText.trim().split(/\s+/).length : 0;
-      const bytes = new Blob([mdText]).size;
-      const kb = (bytes / 1024).toFixed(1);
-
-      metricLines.textContent = lines;
-      metricWords.textContent = words;
-      metricSize.textContent = kb;
-
-      // Badge de Contexto
-      if (mdText.includes('Diálogo / Modal Ativo')) {
-        contextIcon.textContent = '🪟';
-        contextLabel.textContent = 'Modal Priorizado';
-      } else if (mdText.includes('Logs, Terminal')) {
-        contextIcon.textContent = '📜';
-        contextLabel.textContent = 'Terminal / Logs';
-      } else if (mdText.includes('Tabelas de Dados')) {
-        contextIcon.textContent = '📊';
-        contextLabel.textContent = 'Tabela Tabular';
-      } else if (mdText.includes('Menu Lateral')) {
-        contextIcon.textContent = '🧭';
-        contextLabel.textContent = 'Portal / Dashboard';
-      } else {
-        contextIcon.textContent = '📄';
-        contextLabel.textContent = 'Página Web Analisada';
-      }
-    } else {
-      showError('Sem Conteúdo Estruturado', 'Não foi possível extrair dados desta página (pode ser um PDF ou canvas isolado).');
-    }
-  } catch (err) {
-    console.error('SnapMD Error:', err);
-    showError(
-      'Falha na Injeção de Leitura',
-      `O navegador recusou a leitura do DOM nesta aba: ${err?.message || err}. Dica: Se acabou de instalar a extensão, recarregue a aba com F5.`
-    );
-  }
-
-  // Ação de Cópia Tátil com Morphing de Ícone
-  async function triggerCopyAction() {
-    if (!extractedData || !extractedData.markdown) return;
-
-    const iconCopy = btnCopy.querySelector('.icon-copy');
-    const iconCheck = btnCopy.querySelector('.icon-check');
-    const btnText = btnCopy.querySelector('.btn-text');
-
+  async function capture() {
+    if (busy) return;
+    busy = true;
+    data = null;
+    state('extracting', 'Reunindo o conteúdo da página…');
+    preview.textContent = 'Extraindo o conteúdo da página…';
     try {
-      await navigator.clipboard.writeText(extractedData.markdown);
-      
-      btnCopy.classList.add('copied');
-      if (iconCopy) iconCopy.style.display = 'none';
-      if (iconCheck) iconCheck.style.display = 'inline-block';
-      if (btnText) btnText.textContent = 'Copiado!';
-
-      showToast('Markdown copiado com sucesso');
-
-      setTimeout(() => {
-        btnCopy.classList.remove('copied');
-        if (iconCopy) iconCopy.style.display = 'inline-block';
-        if (iconCheck) iconCheck.style.display = 'none';
-        if (btnText) btnText.textContent = 'Copiar Markdown';
-      }, 1800);
-    } catch (err) {
-      console.warn('Clipboard writeText falhou, usando execCommand:', err);
-      const ta = document.createElement('textarea');
-      ta.value = extractedData.markdown;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      showToast('Markdown copiado!');
-    }
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || tab.id == null) {
+        failure('Aba não encontrada', 'Abra uma página e tente novamente.');
+        return;
+      }
+      const url = tab.url || tab.pendingUrl || '';
+      document.getElementById('pageTitle').textContent = tab.title || 'Página atual';
+      document.getElementById('pageTitle').title = tab.title || '';
+      try { document.getElementById('source').textContent = new URL(url).hostname || url; }
+      catch { document.getElementById('source').textContent = url || 'Página atual'; }
+      if (/^(chrome|edge|about|chrome-extension|moz-extension):/.test(url)) {
+        failure('Página restrita', 'O navegador não permite capturar páginas internas. Abra uma página web e tente novamente.');
+        return;
+      }
+      const results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['extractor.js'] });
+      const result = results?.[0]?.result;
+      if (!result || typeof result.markdown !== 'string' || !result.markdown.trim()) {
+        failure('Nenhum conteúdo encontrado', 'Esta página não apresentou conteúdo capturável. PDFs, imagens e canvas podem não fornecer texto.');
+        return;
+      }
+      data = result;
+      document.getElementById('pageTitle').textContent = result.title || tab.title || 'Página atual';
+      document.getElementById('pageTitle').title = result.title || tab.title || '';
+      preview.textContent = result.markdown;
+      state('ready', 'Markdown pronto');
+    } catch {
+      failure('Não foi possível capturar', 'O navegador recusou a leitura desta página. Confira a permissão da extensão e tente novamente.');
+    } finally { busy = false; }
   }
 
-  btnCopy.addEventListener('click', triggerCopyAction);
-
-  // Ação de Download .md
-  function triggerDownloadAction() {
-    if (!extractedData || !extractedData.markdown) return;
-    const blob = new Blob([extractedData.markdown], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const safeTitle = (extractedData.title || 'page-snapshot')
-      .toString()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'snapshot';
-
-    a.href = url;
-    a.download = `${safeTitle}-${Date.now().toString().slice(-6)}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('Download do arquivo .md iniciado');
+  async function copyMarkdown() {
+    if (!data || copy.disabled) return;
+    copy.disabled = true;
+    try {
+      await navigator.clipboard.writeText(data.markdown);
+      state('copied', 'Copiado');
+      celebrationTimer = setTimeout(() => popup.classList.remove('copied'), 400);
+    } catch {
+      popup.classList.remove('copied');
+      status.textContent = 'Não foi possível copiar. Tente novamente ou baixe o arquivo.';
+    } finally { copy.disabled = !data; }
   }
 
-  btnDownload.addEventListener('click', triggerDownloadAction);
+  function downloadMarkdown() {
+    if (!data || download.disabled) return;
+    const url = URL.createObjectURL(new Blob([data.markdown], { type: 'text/markdown;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    const title = (data.title || 'pagina').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0,100) || 'pagina';
+    link.download = `${title}.md`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = 'Download solicitado';
+  }
 
-  // Recarregar aba em caso de erro
-  btnReloadTab.addEventListener('click', () => {
-    if (activeTabId) {
-      chrome.tabs.reload(activeTabId, () => window.close());
-    }
+  copy.addEventListener('click', copyMarkdown);
+  download.addEventListener('click', downloadMarkdown);
+  document.getElementById('btnRetry').addEventListener('click', capture);
+  window.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); copyMarkdown(); }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); downloadMarkdown(); }
+    if (event.key === 'Escape') window.close();
   });
-
-  // Atalhos de Teclado Globais (Linear / Raycast Experience)
-  window.addEventListener('keydown', (e) => {
-    // Ctrl+Enter ou Cmd+Enter -> Copiar
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      triggerCopyAction();
-    }
-    // Ctrl+S ou Cmd+S -> Baixar
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      triggerDownloadAction();
-    }
-    // Esc -> Fechar Popup
-    if (e.key === 'Escape') {
-      window.close();
-    }
-  });
+  capture();
 });

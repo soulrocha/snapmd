@@ -1,106 +1,54 @@
 # SnapMD
 
-<p align="center">
-  <img src="assets/snapmd-preview.jpg" alt="SnapMD Preview" width="100%" />
-</p>
+Abra a extensão para transformar o conteúdo da página em Markdown, incluindo perguntas, respostas e opções marcadas ou desmarcadas. Confira a prévia e copie para sua LLM, sem precisar tirar prints.
 
-SnapMD is a Chromium extension that extracts structured Markdown from web applications, administrative consoles, and internal dashboards.
+![Popup do SnapMD](assets/popup-preview.png)
 
-Most web clippers rely on Mozilla Readability, which looks for editorial article tags like `<article>` and `<p>`. In single-page applications such as Microsoft Entra ID, Portainer, Kubernetes dashboards, and custom enterprise tools, the interface is composed of ARIA grids, modal dialogs, status banners, terminal streams, and form controls. Readability treats these elements as page chrome and strips them out.
+## Como usar
 
-SnapMD runs a passive DOM inspection pipeline designed specifically for application interfaces. It preserves live input values, data tables, active modal dialogs, and terminal logs without clicking or triggering navigation.
+1. Abra a página que deseja capturar e clique no SnapMD.
+2. Confira o Markdown na prévia.
+3. Clique em **Copiar Markdown** ou no ícone de download para salvar um `.md`.
 
----
+Atalhos: `Ctrl+Enter` para copiar, `Ctrl+S` para baixar e `Esc` para fechar. O Ladino reúne folhas durante a extração e comemora somente quando a cópia é confirmada. A preferência do sistema por movimento reduzido é respeitada.
 
-## What SnapMD Extracts
+Toda a extração ocorre no navegador. O SnapMD não envia dados a servidores e não preenche nem envia formulários. Confira o conteúdo antes de compartilhá-lo.
 
-### Active modals and dialogs
-When a modal is open (`.p-dialog`, `[role="dialog"]`, or `.modal.show`), SnapMD places its content at the top of the generated Markdown. This keeps the foreground task front and center.
+## Instalar a release
 
-### System notices and banners
-Infobars and warning banners (`.fxc-infobar`, `[role="alert"]`) are extracted into GitHub Flavored Markdown alerts:
+Após a publicação da versão `v1.3.1`, execute no PowerShell com o [GitHub CLI](https://cli.github.com/) instalado:
 
-```markdown
-> [!WARNING]
-> Tenant-wide consent may revoke previously granted permissions.
-
-> [!NOTE]
-> Values reflect default organization policy.
+```powershell
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\SnapMD\downloads"
+gh release download v1.3.1 --repo soulrocha/snapmd --pattern snapmd-1.3.1.zip --dir "$env:LOCALAPPDATA\SnapMD\downloads"
+Expand-Archive -LiteralPath "$env:LOCALAPPDATA\SnapMD\downloads\snapmd-1.3.1.zip" -DestinationPath "$env:LOCALAPPDATA\SnapMD\1.3.1"
 ```
 
-### Action and command bars
-Buttons inside toolbars (`.fxs-command-bar`, `[role="toolbar"]`, `.azc-toolbar`) are cataloged separately from navigation links, with their enabled or disabled state preserved.
+Abra `chrome://extensions` ou `edge://extensions`, ative **Modo do desenvolvedor**, escolha **Carregar sem compactação** e selecione a pasta `SnapMD\1.3.1` criada em seu diretório local de aplicativos. Não há instalação automática no navegador. Para atualizar uma instalação de desenvolvimento, use **Recarregar** na página de extensões.
 
-### Data tables and ARIA grids
-SnapMD extracts standard HTML `<table>` elements and multi-column `[role="grid"]` components (including Azure Ibiza and PrimeNG grids). Group headers, column headers, and cells are aligned into clean Markdown tables:
+## Limites da captura
 
-```markdown
-### Permissions and Configured Resources
+A captura lê conteúdo renderizado no DOM, inclusive abaixo da área atual de rolagem. Conteúdo virtualizado ainda não carregado, iframes inacessíveis, imagens, canvas e PDFs podem não fornecer texto. Páginas internas do navegador são restritas. O botão **Tentar novamente** repete a captura sem recarregar a página e sem perder os dados do formulário.
 
-#### Group: Microsoft Graph (1)
-| Permission | Type | Description | Admin Consent | Status |
-| --- | --- | --- | --- | --- |
-| User.Read.All | Application | Read all users full profiles | Yes | Granted |
+## Desenvolvimento e publicação
+
+Com Node.js, Playwright e um navegador Chromium instalados:
+
+```powershell
+node --check popup.js
+node --check extractor.js
+node tests/verify.cjs
+powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 ```
 
-### Container and terminal logs
-Log outputs rendered inside `<pre>`, `.monaco-editor`, xterm.js rows, or custom container log viewers (such as Portainer) are captured in fenced code blocks. ANSI escape sequences are automatically cleaned.
+Depois do merge do PR, publique a release usando o ZIP gerado:
 
-### Sidebar navigation
-Menus are captured with their hierarchy intact. SnapMD marks only the currently active route (`[x] Item (Ativo)`), and isolates the sidebar container so it never claims buttons or data tables belonging to the main content.
+```powershell
+gh release create v1.3.1 dist/snapmd-1.3.1.zip --repo soulrocha/snapmd --target main --title "SnapMD 1.3.1" --generate-notes
+```
 
-### Form states and switches
-Inputs, select dropdowns, radio groups, checkboxes, and toggle switches (`[role="switch"]`, `por-switch-field`, `p-inputswitch`) are captured with their live values (`Marcado (true)` or `Desmarcado (false)`).
+O empacotamento inclui somente os arquivos necessários à extensão e a documentação. A release não é publicada pelo script.
 
----
+## Créditos e licença
 
-## Zero Synthetic Clicks
-
-Some tools simulate clicks on accordions, tabs, or menus to reveal hidden text. On enterprise portals, synthetic clicks can trigger unwanted route changes, close active blades, or submit actions. 
-
-SnapMD is strictly passive. It reads values directly from DOM properties and attributes (`textContent`, `value`, `uib-tooltip`, `aria-label`) without dispatching synthetic mouse or pointer events.
-
----
-
-## Installation
-
-SnapMD works on Google Chrome, Microsoft Edge, Brave, and other Chromium browsers.
-
-1. Clone or download this repository:
-   ```bash
-   git clone https://github.com/soulrocha/snapmd.git
-   ```
-2. Open your browser extension management page:
-   - Chrome / Brave: `chrome://extensions`
-   - Microsoft Edge: `edge://extensions`
-3. Enable **Developer mode** (toggle in the top-right corner).
-4. Click **Load unpacked** (or *Carregar sem compactação*).
-5. Select the folder containing `manifest.json`.
-
----
-
-## Keyboard Shortcuts
-
-Inside the extension popup:
-
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl + Enter` | Copy generated Markdown to clipboard |
-| `Ctrl + S` | Download note as `.md` file |
-| `Escape` | Close the popup |
-
----
-
-## Architecture
-
-The extraction engine (`extractor.js`) uses a Pipes and Filters architecture coordinated by a `PipelineOrchestrator`:
-
-1. **DOMNodeRegistry with semantic shielding:** A node claiming system tracks elements across extractors. High-value data nodes (`table`, `[role="grid"]`, `[role="alert"]`, `[role="toolbar"]`) are shielded so layout wrappers cannot claim or hide them.
-2. **Deterministic execution order:** Metadata runs first, followed by foreground Modals, System Banners, Action Bars, Tables, Terminal Logs, Sidebar Navigation, Key-Value Pairs, and Form Controls.
-3. **Local sandbox execution:** No analytics, no external scripts, and no remote calls. The extraction runs entirely within the local tab context.
-
----
-
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
+O Ladino vem do [Claude Code Hero Journey](https://github.com/soulrocha/Claude-code-hero-journey), de Saulo Rocha, sob licença MIT. Sua licença acompanha a extensão em [assets/hero-journey-LICENSE.txt](assets/hero-journey-LICENSE.txt). SnapMD também usa [licença MIT](LICENSE).

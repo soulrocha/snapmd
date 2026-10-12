@@ -21,6 +21,16 @@ const playwright = require("playwright");
  assert.ok(!md.includes('SEGREDO') && !md.includes('INVISÍVEL') && !md.includes('PASSWORD'));
  assert.ok(md.includes('\\*\\*texto\\*\\*') && md.includes('ação\n'));
  assert.equal(await page.content(),before,'Extraction must not mutate the DOM');
+ const edge = await browser.newPage();
+ await edge.setContent(`<div role="dialog" style="display:none"><h2>Login fechado</h2></div><div role="dialog"><h2>Confirmação aberta</h2><p>Deseja continuar?</p></div><form><div role="switch" aria-checked="true" aria-label="Notificações"><input type="checkbox" style="display:none"></div><p-inputswitch class="p-inputswitch-checked"><span>Modo escuro</span><input type="checkbox" checked style="display:none"></p-inputswitch><fieldset><legend>Perfil</legend><p>Regime de contratação</p><label><input type="radio" name="employment" value="clt" checked>CLT</label><label><input type="radio" name="employment" value="pj">PJ</label><p>Benefícios desejados</p><label><input type="checkbox" name="benefits" checked>Vale-refeição</label><label><input type="checkbox" name="benefits">Plano de saúde</label></fieldset></form><div style="display:contents">Texto em contents <span>e filho</span></div>`);
+ const edgeMd = (await edge.evaluate(source)).markdown;
+ assert.ok(edgeMd.includes('Diálogo / Modal Ativo: Confirmação aberta'), 'first visible dialog');
+ assert.ok(/### Notificações\n\nMarcado \(true\)/.test(edgeMd), 'switch wrapper with hidden native input');
+ assert.ok(/### Modo escuro\n\nMarcado \(true\)/.test(edgeMd), 'p-inputswitch wrapper state');
+ assert.ok(/### Regime de contratação\n\n- \[x\] CLT\n- \[ \] PJ\n/.test(edgeMd), 'radio question');
+ assert.ok(/### Benefícios desejados\n\n- \[x\] Vale-refeição\n- \[ \] Plano de saúde/.test(edgeMd), 'separate checkbox question');
+ assert.ok(edgeMd.includes('Texto em contents') && edgeMd.includes('e filho'), 'display: contents text');
+ await edge.close();
 
  const popupURL='file:///'+path.resolve('popup.html').replace(/\\/g,'/');
  async function open(mode='success',reduced=false){
@@ -34,7 +44,7 @@ const playwright = require("playwright");
  }
  const popup=await open();await popup.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);
  await popup.locator('#btnCopy').click();assert.equal(await popup.evaluate(()=>window.__copied),md);
- const downloadEvent=popup.waitForEvent('download');await popup.keyboard.press('Control+s');const downloaded=await downloadEvent;assert.equal(fs.readFileSync(await downloaded.path(),'utf8'),md);
+ const downloadEvent=popup.waitForEvent('download');await popup.keyboard.press('Control+s');const downloaded=await downloadEvent;assert.match(downloaded.suggestedFilename(),/^[a-z0-9-]+-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.md$/);assert.equal(fs.readFileSync(await downloaded.path(),'utf8'),md);
  await popup.waitForTimeout(450);await popup.waitForFunction(()=>document.querySelector('.pet').complete && document.querySelector('.pet').naturalWidth>0);await popup.evaluate(()=>{document.getElementById('source').textContent='exemplo.gov.br';document.getElementById('status').textContent='Markdown pronto';const preview=document.getElementById('markdownPreview');const index=preview.textContent.indexOf('### Você foi indicado?');const preceding=preview.textContent.slice(0,index).split('\n').length;preview.scrollTop=Math.max(0,(preceding-2)*19.2);});await popup.screenshot({path:process.env.SNAPMD_SCREENSHOT||path.join(__dirname,'../assets/popup-preview.png')});
  const layout=await popup.evaluate(()=>({width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,preview:document.querySelector('#markdownPreview').getBoundingClientRect().height}));assert.ok(layout.width<=400&&layout.height<=560&&layout.preview>200,JSON.stringify(layout));
  await popup.evaluate(()=>window.__clipboardPending=true);await popup.locator('#btnCopy').click();assert.ok(await popup.locator('#btnCopy').isDisabled());assert.equal(await popup.locator('.copied').count(),0);await popup.evaluate(()=>window.__clipboardResolve());await popup.waitForFunction(()=>document.querySelector('.copied'));

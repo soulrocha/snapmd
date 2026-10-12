@@ -103,7 +103,22 @@
             const style = getComputedStyle(node);
             if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
         }
-        return el.getClientRects().length > 0;
+        // display: contents generates no box, but its children still render.
+        return el.getClientRects().length > 0 || getComputedStyle(el).display === 'contents';
+    }
+    const CHOICE_SELECTOR = 'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]';
+    function choiceKind(el) {
+        if (el.type === 'radio' || el.getAttribute('role') === 'radio') return 'radio';
+        if (el.type === 'checkbox' || el.getAttribute('role') === 'checkbox') return 'checkbox';
+        return null;
+    }
+    function isChecked(el) {
+        if (el.tagName === 'INPUT') return el.checked;
+        if (el.getAttribute('aria-checked') === 'true') return true;
+        if (el.getAttribute('aria-checked') === 'false') return false;
+        const native = el.querySelector?.('input[type="checkbox"], input[type="radio"]');
+        if (native) return native.checked;
+        return /(^|[\s_-])(checked|active)(\s|$)/.test(el.getAttribute('class') || '');
     }
     function escapeMarkdown(value) {
         return String(value ?? '').replace(/([\\`*_{}\[\]<>|])/g, '\\$1');
@@ -128,7 +143,8 @@
             }
             if (cursor.parentElement?.matches('form, main, body, fieldset, [role="group"], [role="radiogroup"]')) break;
         }
-        return { text: inp.placeholder || inp.title || inp.name || inp.id || 'Campo sem rótulo', nodes: [] };
+        const ownText = inp.matches(CONTROL_SELECTOR) && !['INPUT', 'SELECT', 'TEXTAREA'].includes(inp.tagName) ? (inp.innerText || '').trim() : '';
+        return { text: ownText || inp.placeholder || inp.title || inp.name || inp.id || 'Campo sem rótulo', nodes: [] };
     }
     function resolveHumanLabel(inp) { return labelInfo(inp).text; }
 
@@ -178,8 +194,8 @@
             return !!ctx.root.querySelector('.p-dialog:not(.p-dialog-hidden), [role="dialog"], .modal.show, div.p-dynamic-dialog, .drawer.open');
         },
         extract: async (ctx) => {
-            const activeDialog = ctx.root.querySelector('.p-dialog:not(.p-dialog-hidden), [role="dialog"], .modal.show, div.p-dynamic-dialog, .drawer.open');
-            if (!activeDialog || !isVisible(activeDialog)) return [];
+            const activeDialog = Array.from(ctx.root.querySelectorAll('.p-dialog:not(.p-dialog-hidden), [role="dialog"], .modal.show, div.p-dynamic-dialog, .drawer.open')).find(isVisible);
+            if (!activeDialog) return [];
 
             const modalHeading = activeDialog.querySelector('.p-dialog-header, .p-dialog-title, h1, h2, h3');
             if (modalHeading) ctx.registry.claimDescendants(modalHeading, 'modal');
@@ -634,26 +650,50 @@
             }
             inputs.forEach(inp => {
                 if (handled.has(inp) || !eligible(inp)) return;
-                // Native child controls carry the live state of custom switch wrappers.
-                if (inp.querySelector(CONTROL_SELECTOR)) return;
+                // Visible native child controls carry the live state of custom switch wrappers;
+                // otherwise the wrapper itself reports the state.
+                const nested = Array.from(inp.querySelectorAll(CONTROL_SELECTOR));
+                if (nested.some(eligible)) return;
+                nested.forEach(el => { handled.add(el); ctx.registry.claim(el, 'forms'); });
                 handled.add(inp);
                 ctx.registry.claim(inp, 'forms');
-                const choice = ['radio', 'checkbox'].includes(inp.type) || ['radio', 'checkbox'].includes(inp.getAttribute('role'));
-                const container = inp.closest('fieldset, [role="radiogroup"], [role="group"]');
-                if (choice) {
-                    const group = inputs.filter(el => eligible(el) && !handled.has(el) &&
-                        (el.type === inp.type && inp.name && el.name === inp.name && el.form === inp.form && el.getRootNode() === inp.getRootNode() ||
-                         container && el.closest('fieldset, [role="radiogroup"], [role="group"]') === container && (['radio', 'checkbox'].includes(el.type) || ['radio', 'checkbox'].includes(el.getAttribute('role')))));
+                const kind = choiceKind(inp);
+                const groupOf = el => el.closest('fieldset, [role="radiogroup"], [role="group"]');
+                const questionOf = el => el.closest('[data-question], [class*="question"], .form-group');
+                const container = groupOf(inp);
+                if (kind) {
+                    const group = inputs.filter(el => eligible(el) && !handled.has(el) && choiceKind(el) === kind &&
+                        (inp.name && el.name === inp.name && el.form === inp.form && el.getRootNode() === inp.getRootNode() ||
+                         container && groupOf(el) === container && questionOf(el) === questionOf(inp) && !(inp.name && el.name && el.name !== inp.name)));
                     const members = [inp, ...group];
-                    const legend = container?.querySelector(':scope > legend');
-                    const shared = members.length > 1 ? inp.closest('.form-group, [data-question], [class*="question"], [class*="field"]') : null;
-                    const groupTitle = shared ? Array.from(shared.querySelectorAll('label, p, h2, h3, h4, [class*="label"]')).find(el => !el.querySelector(CONTROL_SELECTOR) && !members.some(control => Array.from(control.labels || []).includes(el))) : null;
-                    const question = groupTitle ? { text: groupTitle.innerText, nodes: [groupTitle] } : legend ? { text: legend.innerText, nodes: [legend] } : container ? labelInfo(container) : labelInfo(inp);
+                    const isOptionLabel = el => members.some(control => Array.from(control.labels || []).includes(el));
+                    const titleIn = scope => scope ? Array.from(scope.querySelectorAll('label, p, h2, h3, h4, [class*="label"]')).find(el => !el.querySelector(CONTROL_SELECTOR) && !isOptionLabel(el) && isVisible(el)) : null;
+                    // A fieldset may hold several questions; then its legend does not name this one.
+                    const mixed = container && Array.from(container.querySelectorAll(CHOICE_SELECTOR)).some(el => eligible(el) && !members.includes(el));
+                    let groupTitle = null;
+                    if (mixed) {
+                        let scope = inp.parentElement;
+                        while (scope && scope !== container && !members.every(el => scope.contains(el))) scope = scope.parentElement;
+                        const narrow = scope && scope !== container && !Array.from(scope.querySelectorAll(CHOICE_SELECTOR)).some(el => eligible(el) && !members.includes(el));
+                        groupTitle = narrow ? titleIn(scope) : null;
+                        if (!groupTitle) {
+                            let anchor = inp;
+                            while (anchor.parentElement && anchor.parentElement !== container && anchor.parentElement.querySelectorAll(CHOICE_SELECTOR).length === 1) anchor = anchor.parentElement;
+                            for (let prev = anchor.previousElementSibling; prev; prev = prev.previousElementSibling) {
+                                if (prev.matches(CONTROL_SELECTOR) || prev.querySelector(CONTROL_SELECTOR)) break;
+                                if (prev.tagName !== 'LEGEND' && isVisible(prev) && (prev.innerText || '').trim()) { groupTitle = prev; break; }
+                            }
+                        }
+                    } else if (members.length > 1) {
+                        groupTitle = titleIn(inp.closest('.form-group, [data-question], [class*="question"], [class*="field"]'));
+                    }
+                    const legend = mixed ? null : container?.querySelector(':scope > legend');
+                    const question = groupTitle ? { text: groupTitle.innerText, nodes: [groupTitle] } : legend ? { text: legend.innerText, nodes: [legend] } : container && !mixed ? labelInfo(container) : labelInfo(inp);
                     consumeLabel(question);
                     const options = members.map(el => {
                         handled.add(el); ctx.registry.claim(el, 'forms');
                         const info = labelInfo(el); consumeLabel(info);
-                        const checked = el.checked === true || el.getAttribute('aria-checked') === 'true';
+                        const checked = isChecked(el);
                         return `- [${checked ? 'x' : ' '}] ${escapeMarkdown(info.text === question.text && el.value && el.value !== 'on' ? el.value : info.text)}`;
                     });
                     output.push(`### ${escapeMarkdown(question.text)}\n\n${options.join('\n')}${details(inp)}`);
@@ -665,8 +705,8 @@
                     value = Array.from(inp.selectedOptions).map(opt => opt.text.trim()).join(', ') || 'Não preenchido';
                     const options = Array.from(inp.options).map(opt => opt.text.trim());
                     value = `Selecionado: ${value}\nOpções: ${options.join(' / ')}`;
-                } else if (inp.getAttribute('role') === 'switch') {
-                    value = inp.getAttribute('aria-checked') === 'true' ? 'Marcado (true)' : 'Desmarcado (false)';
+                } else if (inp.getAttribute('role') === 'switch' || inp.matches('por-switch-field, p-inputswitch')) {
+                    value = isChecked(inp) ? 'Marcado (true)' : 'Desmarcado (false)';
                 }
                 const text = String(value).trim() ? escapeMarkdown(value) : 'Não preenchido';
                 output.push(`### ${escapeMarkdown(info.text)}\n\n${text}${details(inp)}`);

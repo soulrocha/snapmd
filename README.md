@@ -16,19 +16,23 @@ Toda a extração ocorre no navegador. O SnapMD não envia dados a servidores e 
 
 ## Instalar a release
 
-Após a publicação da versão `v1.3.1`, execute no PowerShell com o [GitHub CLI](https://cli.github.com/) instalado:
+Após a publicação da versão `v1.4.0`, execute no PowerShell com o [GitHub CLI](https://cli.github.com/) instalado:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\SnapMD\downloads"
-gh release download v1.3.1 --repo soulrocha/snapmd --pattern snapmd-1.3.1.zip --dir "$env:LOCALAPPDATA\SnapMD\downloads"
-Expand-Archive -LiteralPath "$env:LOCALAPPDATA\SnapMD\downloads\snapmd-1.3.1.zip" -DestinationPath "$env:LOCALAPPDATA\SnapMD\1.3.1"
+gh release download v1.4.0 --repo soulrocha/snapmd --pattern snapmd-1.4.0.zip --dir "$env:LOCALAPPDATA\SnapMD\downloads"
+Expand-Archive -LiteralPath "$env:LOCALAPPDATA\SnapMD\downloads\snapmd-1.4.0.zip" -DestinationPath "$env:LOCALAPPDATA\SnapMD\1.4.0"
 ```
 
-Abra `chrome://extensions` ou `edge://extensions`, ative **Modo do desenvolvedor**, escolha **Carregar sem compactação** e selecione a pasta `SnapMD\1.3.1` criada em seu diretório local de aplicativos. Não há instalação automática no navegador. Para atualizar uma instalação de desenvolvimento, use **Recarregar** na página de extensões.
+Abra `chrome://extensions` ou `edge://extensions`, ative **Modo do desenvolvedor**, escolha **Carregar sem compactação** e selecione a pasta `SnapMD\1.4.0` criada em seu diretório local de aplicativos. Não há instalação automática no navegador. Para atualizar uma instalação de desenvolvimento, use **Recarregar** na página de extensões.
 
 ## Limites da captura
 
-A captura lê conteúdo renderizado no DOM, inclusive abaixo da área atual de rolagem. Conteúdo virtualizado ainda não carregado, iframes inacessíveis, imagens, canvas e PDFs podem não fornecer texto. Páginas internas do navegador são restritas. O botão **Tentar novamente** repete a captura sem recarregar a página e sem perder os dados do formulário.
+A captura percorre a página inteira em ordem de leitura, inclusive abaixo da área atual de rolagem: títulos, listas, links com URL, tabelas e grids, código, logs e terminais, shadow DOM, iframes, modais e avisos (toasts). Regiões como navegação e conteúdo principal aparecem delimitadas. Cada controle sai com o estado (marcado, selecionado, valor, desabilitado, expandido, aba ativa, foco, erro de validação). Texto cortado com reticências ganha o texto completo do tooltip. Senhas, campos de cartão e códigos de uso único nunca têm o valor copiado.
+
+Para ler iframes de outra origem, como os de portais Microsoft, a extensão pede acesso a todos os sites (`<all_urls>`). Ela só lê a página quando você clica no ícone.
+
+Limites: linhas de grid ou log virtualizado que a página ainda não carregou não estão no DOM e não aparecem (a captura informa "N de M linhas renderizadas" quando o grid declara o total). Do terminal sai só o que está na tela; o histórico rolado não fica no DOM. Terminal desenhado em canvas, imagens sem texto alternativo e PDFs não fornecem texto. Páginas internas do navegador são restritas. O botão **Tentar novamente** repete a captura sem recarregar a página e sem perder os dados do formulário.
 
 ## Desenvolvimento e publicação
 
@@ -44,7 +48,7 @@ powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 Depois do merge do PR, publique a release usando o ZIP gerado:
 
 ```powershell
-gh release create v1.3.1 dist/snapmd-1.3.1.zip --repo soulrocha/snapmd --target main --title "SnapMD 1.3.1" --generate-notes
+gh release create v1.4.0 dist/snapmd-1.4.0.zip --repo soulrocha/snapmd --target main --title "SnapMD 1.4.0" --generate-notes
 ```
 
 O empacotamento inclui somente os arquivos necessários à extensão e a documentação. A release não é publicada pelo script.

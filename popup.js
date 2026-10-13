@@ -47,12 +47,27 @@ document.addEventListener('DOMContentLoaded', () => {
         failure('Página restrita', 'O navegador não permite capturar páginas internas. Abra uma página web e tente novamente.');
         return;
       }
-      const results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['extractor.js'] });
-      const result = results?.[0]?.result;
-      if (!result || typeof result.markdown !== 'string' || !result.markdown.trim()) {
+      // Todos os frames, para alcançar iframes de outra origem (portais Microsoft etc.).
+      let results;
+      try { results = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['extractor.js'] }); }
+      catch { results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['extractor.js'] }); }
+      const main = results?.find(r => !r.frameId)?.result;
+      if (!main || typeof main.markdown !== 'string' || !main.markdown.trim()) {
         failure('Nenhum conteúdo encontrado', 'Esta página não apresentou conteúdo capturável. PDFs, imagens e canvas podem não fornecer texto.');
         return;
       }
+      // Só frames que um frame já aceito encontrou renderizados, a partir do principal:
+      // iframe oculto não vaza conteúdo, nem o dos frames dentro dele.
+      const shown = new Set([0]);
+      for (let grew = true; grew;) {
+        grew = false;
+        results.forEach(r => (shown.has(r.frameId || 0) ? r.result?.shownFrameIds || [] : []).forEach(id => {
+          if (!shown.has(id)) { shown.add(id); grew = true; }
+        }));
+      }
+      const frames = results.filter(r => r.frameId && shown.has(r.frameId) && typeof r.result?.markdown === 'string' && r.result.markdown.trim())
+        .map(r => `## Frame: ${r.result.url}\n\n${r.result.markdown.trim()}`);
+      const result = { ...main, markdown: [main.markdown.trimEnd(), ...frames].join('\n\n---\n\n') + '\n' };
       data = result;
       document.getElementById('pageTitle').textContent = result.title || tab.title || 'Página atual';
       document.getElementById('pageTitle').title = result.title || tab.title || '';

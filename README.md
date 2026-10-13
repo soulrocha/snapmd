@@ -32,6 +32,8 @@ git -C "$env:LOCALAPPDATA\SnapMD" pull
 
 Depois clique em **Recarregar** no card do SnapMD em `edge://extensions`.
 
+Instalou a 1.3.1 pelo ZIP? Remova o SnapMD em `edge://extensions`, apague a pasta `%LOCALAPPDATA%\SnapMD`, rode o `git clone` acima e carregue a pasta de novo. A 1.4.0 pede acesso a todos os sites para ler iframes de outra origem.
+
 Prefere um pacote sem Git? Cada release no GitHub traz um `snapmd-<versão>.zip` com os mesmos arquivos; extraia-o na mesma pasta.
 
 ## Limites da captura

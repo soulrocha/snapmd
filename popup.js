@@ -47,12 +47,24 @@ document.addEventListener('DOMContentLoaded', () => {
         failure('Página restrita', 'O navegador não permite capturar páginas internas. Abra uma página web e tente novamente.');
         return;
       }
-      const results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['extractor.js'] });
-      const result = results?.[0]?.result;
-      if (!result || typeof result.markdown !== 'string' || !result.markdown.trim()) {
+      // Todos os frames, para alcançar iframes de outra origem (portais Microsoft etc.).
+      let results;
+      try { results = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['extractor.js'] }); }
+      catch { results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['extractor.js'] }); }
+      const main = results?.find(r => !r.frameId)?.result;
+      if (!main || typeof main.markdown !== 'string' || !main.markdown.trim()) {
         failure('Nenhum conteúdo encontrado', 'Esta página não apresentou conteúdo capturável. PDFs, imagens e canvas podem não fornecer texto.');
         return;
       }
+      // Iframe oculto não vaza: descarta o frame cuja URL (sem hash) só aparece entre os ocultos.
+      // Na dúvida (mesma URL visível em outro lugar), mantém o conteúdo.
+      const key = url => { try { const u = new URL(url); u.hash = ''; return u.href; } catch { return url || ''; } };
+      const shown = new Set(results.flatMap(r => r.result?.shownFrameUrls || []));
+      const hidden = new Set(results.flatMap(r => r.result?.hiddenFrameUrls || []));
+      const frames = results.filter(r => r.frameId && typeof r.result?.markdown === 'string' && r.result.markdown.trim()
+          && !(hidden.has(key(r.result.url)) && !shown.has(key(r.result.url))))
+        .map(r => `## Frame: ${r.result.url}\n\n${r.result.markdown.trim()}`);
+      const result = { ...main, markdown: [main.markdown.trimEnd(), ...frames].join('\n\n---\n\n') + '\n' };
       data = result;
       document.getElementById('pageTitle').textContent = result.title || tab.title || 'Página atual';
       document.getElementById('pageTitle').title = result.title || tab.title || '';

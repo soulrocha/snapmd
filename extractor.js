@@ -1,818 +1,605 @@
 /**
- * SnapMD — Universal Web & Portal Markdown Extractor Engine
- * Arquitetura Pipes & Filters com DOM Node Claiming Registry (Resolução Definitiva)
+ * SnapMD — serializa a página inteira em Markdown, em ordem de documento,
+ * com o estado de cada controle. Passivo: não muta o DOM nem rola a página.
  */
-(async () => {
-    // ------------------------------------------------------------------
-    // REGISTRY: Controle de Reivindicação de Nós com Blindagem Semântica
-    // ------------------------------------------------------------------
-    class DOMNodeRegistry {
-        constructor() {
-            this.claimedNodes = new WeakSet();
-            this.claimMap = new WeakMap();
-            // Elementos de alto valor que NUNCA devem ser silenciados por reivindicação ancestral
-            this.shieldedSelectors = [
-                'table',
-                '[role="grid"]',
-                '.fxc-grid',
-                '.azc-grid',
-                '[role="alert"]',
-                '.fxc-infobar',
-                '.msportalfx-infobar',
-                '[role="toolbar"]',
-                '.fxs-command-bar',
-                '.fxs-toolbar',
-                '.azc-toolbar',
-                '.fxc-commandBar',
-                'form',
-                'input', 'textarea', 'select', '[role="radio"]', '[role="checkbox"]', '[role="switch"]',
-                '.monaco-editor',
-                '.terminal',
-                'pre',
-                'code'
-            ];
-        }
+(() => {
+    // Frame filho de mesma origem: o pai já o percorre inline.
+    // Frame sem área (anúncio, analytics, captcha) não é conteúdo.
+    if (window !== window.top && (window.frameElement || !innerWidth || !innerHeight)) return null;
 
-        isClaimed(el) {
-            return !el || !isVisible(el) || this.claimedNodes.has(el);
+    const SKIP = new Set(['script', 'style', 'noscript', 'template', 'head', 'title', 'desc', 'defs', 'symbol', 'clippath', 'mask', 'option', 'datalist']);
+    const INLINE = new Set(['span', 'a', 'b', 'strong', 'i', 'em', 'u', 's', 'del', 'small', 'label', 'abbr', 'sup', 'sub', 'mark', 'time', 'font', 'cite', 'q', 'bdi', 'bdo', 'var', 'data', 'output', 'img']);
+    const ICON = '.material-icons, .material-icons-outlined, [class*="material-symbols"], .codicon, .fa, [class^="fa-"], .glyphicon, .pi:empty';
+    const CHOICE_ROLES = new Set(['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio']);
+    const VALUE_ROLES = new Set(['combobox', 'textbox', 'searchbox', 'spinbutton', 'slider', 'progressbar', 'meter']);
+    const TABLE = 'table, [role="table"], [role="grid"], [role="treegrid"]';
+    const ROW = 'tr, [role="row"]';
+    const CELL = 'td, th, [role="cell"], [role="gridcell"], [role="columnheader"], [role="rowheader"]';
+    const STRUCTURE = 'a[href], button, input, select, textarea, table, h1, h2, h3, h4, h5, h6, ul, ol, li, img, p, b, strong, em, blockquote';
+    const SECRET = /(^|\s)(cc-|one-time-code|current-password|new-password)/;
+    const SECRET_NAME = /(^|[^a-z])(cvv|cvc|csc|otp|pin|senha|password|passwd|secret)([^a-z]|$)/i;
+    // "txtSenha" e "userPassword" viram "txt Senha" e "user Password" antes do teste.
+    const isSecretName = text => SECRET_NAME.test(String(text).replace(/([a-z])([A-Z])/g, '$1 $2'));
+    // Cartão: prefixo e tamanho de bandeira + Luhn. Sem a bandeira, IMEI (15 dígitos, Luhn) seria ocultado.
+    function isCardNumber(value) {
+        const digits = String(value).replace(/[\s.-]/g, '');
+        const n = digits.length;
+        const brand = /^4/.test(digits) ? [13, 16, 19].includes(n)
+            : /^(5[1-5]|2[2-7])/.test(digits) ? n === 16
+            : /^3[47]/.test(digits) ? n === 15
+            : /^3[068]/.test(digits) ? n === 14
+            : /^(6|35)/.test(digits) ? n >= 16 && n <= 19 : false;
+        if (!/^\d+$/.test(digits) || !brand) return false;
+        let sum = 0;
+        for (let i = 0; i < digits.length; i++) {
+            let d = +digits[digits.length - 1 - i];
+            if (i % 2) { d *= 2; if (d > 9) d -= 9; }
+            sum += d;
         }
-
-        claim(el, owner) {
-            if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
-            this.claimedNodes.add(el);
-            this.claimMap.set(el, owner);
-        }
-
-        claimDescendantsSafely(rootEl, owner) {
-            if (!rootEl || rootEl.nodeType !== Node.ELEMENT_NODE) return;
-            this.claim(rootEl, owner);
-
-            const descendants = rootEl.getElementsByTagName('*');
-            for (let i = 0; i < descendants.length; i++) {
-                const child = descendants[i];
-                const isShielded = this.shieldedSelectors.some(sel => {
-                    try { return child.matches && child.matches(sel); } catch (_) { return false; }
-                });
-                if (isShielded) {
-                    continue; // Não canibaliza elementos semânticos nobres
-                }
-                this.claimedNodes.add(child);
-            }
-        }
-
-        claimDescendants(el, owner) {
-            this.claimDescendantsSafely(el, owner);
-        }
+        return sum % 10 === 0;
     }
 
-    // ------------------------------------------------------------------
-    // HELPERS COMPARTILHADOS (100% Passivos)
-    // ------------------------------------------------------------------
-    function resolveFullText(el) {
-        if (!el) return '';
-        let text = (el.innerText || el.textContent || el.value || '').trim();
+    let out = [];          // blocos prontos: { text, tight }
+    let buf = '';          // texto inline do bloco corrente
+    let indent = '';       // recuo de continuação dentro de listas
+    let pending = null;    // marcador do próximo bloco (item de lista)
+    let quote = '';
+    let cell = false;      // renderizando dentro de célula de tabela
+    let resets = 0;        // quantas vezes buf foi esvaziado (wrap usa para achar seu início)
+    const counters = new WeakMap(); // numeração corrente de cada <ol>
+    const dialogs = [];
+    // Iframes que a caminhada alcançou (renderizados). O popup descarta o frame filho cuja URL
+    // só aparece entre os ocultos. Chrome e Edge não têm runtime.getFrameId; a chave é a URL sem hash.
+    const reachedFrames = new WeakSet();
+    const frameKey = url => {
+        if (url === 'about:srcdoc') return url;
+        try {
+            const u = new URL(url);
+            if (!/^https?:$/.test(u.protocol)) return '';
+            u.hash = '';
+            return u.href;
+        } catch (_) { return ''; }
+    };
+    const elementKey = el => el.hasAttribute('srcdoc') ? 'about:srcdoc' : frameKey(el.src);
+    const emitted = new WeakSet(); // checkbox/radio já emitido (pelo rótulo ou pelo próprio input)
 
-        if (text.includes('[...]') || text.includes('…') || text.includes('...')) {
-            const selfFull = el.getAttribute('uib-tooltip') || 
-                             el.getAttribute('data-original-title') || 
-                             el.getAttribute('title') || 
-                             el.getAttribute('tooltip') ||
-                             el.getAttribute('aria-label');
-            if (selfFull && selfFull.length > text.length) return selfFull.trim();
+    let focused = document.activeElement;
+    while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
 
-            const container = el.closest('div, tr, p, li, .form-group') || el.parentElement;
-            if (container) {
-                const copyEl = container.querySelector('[data-clipboard-text], [data-copy], button, a, [uib-tooltip], [title], input[type="text"], input[readonly]');
-                if (copyEl) {
-                    for (const attr of Array.from(copyEl.attributes || [])) {
-                        const val = attr.value || '';
-                        if (val.length > text.length && (val.includes('http') || val.includes('/') || val.length > 20)) {
-                            return val.trim();
-                        }
-                    }
-                }
-            }
-        }
+    const styleOf = el => (el.ownerDocument.defaultView || window).getComputedStyle(el);
+    const attr = (el, name) => el.getAttribute(name);
+    const clean = t => String(t ?? '').replace(/\s+/g, ' ').trim();
+    const esc = t => String(t ?? '').replace(/([\\`*_{}\[\]<>|])/g, '\\$1');
+
+    function push(text) {
+        const lead = pending ?? indent;
+        pending = null;
+        const pad = quote + indent;
+        const [first, ...rest] = text.split('\n');
+        out.push({ text: quote + lead + first + rest.map(l => '\n' + pad + l).join(''), tight: !!(lead || quote) });
+    }
+    function flush(prefix = '') {
+        let text = buf.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+        buf = '';
+        resets++;
+        // Texto da página que começa como "# x" ou "1. x" não pode virar título ou lista.
+        if (!prefix) text = text.replace(/^(#{1,6}\s|[-+]\s)/, '\\$1').replace(/^(\d+)\.\s/, '$1\\. ');
+        if (text) push(prefix + text);
+    }
+    function inlineCode(t) {
+        const ticks = '`'.repeat(Math.max(1, ...(t.match(/`+/g) || []).map(r => r.length + 1)));
+        return ticks.length > 1 ? `${ticks} ${t} ${ticks}` : `\`${t}\``;
+    }
+    // Acrescenta ao fim do bloco corrente, ou do último bloco emitido.
+    function tail(text) {
+        if (buf.trim() || !out.length) buf += text;
+        else out[out.length - 1].text += text;
+    }
+    function capture(fn) {
+        const saved = [out, buf, indent, pending, quote, cell];
+        out = []; buf = ''; indent = ''; pending = null; quote = ''; cell = true;
+        fn(); flush();
+        const text = out.map(o => o.text).join('\n');
+        [out, buf, indent, pending, quote, cell] = saved;
         return text;
     }
 
-    const CONTROL_SELECTOR = 'input, select, textarea, [role="switch"], [role="checkbox"], [role="radio"], por-switch-field, p-inputswitch';
-    function isVisible(el) {
-        if (!el || el.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
-        for (let node = el; node; node = node.parentElement) {
-            const style = getComputedStyle(node);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    function rendered(el, style = styleOf(el)) {
+        if (style.display === 'none') return false;
+        if (style.display === 'contents') return true;
+        if (style.contentVisibility === 'hidden') return false; // hidden="until-found"
+        const rects = el.getClientRects();
+        if (!rects.length) return false;
+        // Acordeão fechado: caixa de altura zero que corta o conteúdo.
+        if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
+            const r = el.getBoundingClientRect();
+            if ((r.width === 0 && style.overflowX !== 'visible') || (r.height === 0 && style.overflowY !== 'visible')) return false;
         }
-        // display: contents generates no box, but its children still render.
-        return el.getClientRects().length > 0 || getComputedStyle(el).display === 'contents';
+        return true;
     }
-    const CHOICE_SELECTOR = 'input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]';
-    function choiceKind(el) {
-        if (el.type === 'radio' || el.getAttribute('role') === 'radio') return 'radio';
-        if (el.type === 'checkbox' || el.getAttribute('role') === 'checkbox') return 'checkbox';
+
+    function states(el) {
+        const s = [];
+        const current = attr(el, 'aria-current');
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (current && current !== 'false') s.push('ativo');
+        else if (/^(a|li|button)$/.test(el.localName) || /^(tab|menuitem|treeitem|option|row|link)$/.test(attr(el, 'role') || '')) {
+            if (attr(el, 'aria-selected') !== 'true' && /(^|[\s_-])(active|selected|current)(?=$|[\s_-])/i.test(cls)) s.push('ativo');
+        }
+        if (attr(el, 'aria-selected') === 'true') s.push('selecionado');
+        if (attr(el, 'aria-expanded')) s.push(attr(el, 'aria-expanded') === 'true' ? 'expandido' : 'recolhido');
+        if (attr(el, 'aria-pressed')) s.push(attr(el, 'aria-pressed') === 'true' ? 'pressionado' : 'não pressionado');
+        if (el.disabled || el.matches(':disabled') || attr(el, 'aria-disabled') === 'true') s.push('desabilitado');
+        if (attr(el, 'aria-invalid') === 'true') s.push('inválido');
+        if (el === focused) s.push('em foco');
+        return s.length ? ` _(${s.join(', ')})_` : '';
+    }
+
+    // Texto de um rótulo sem o conteúdo dos controles que ele envolve.
+    // A raiz pode estar oculta (aria-labelledby aponta para rótulo invisível); descendentes ocultos não contam.
+    function labelText(node, root = true) {
+        if (node.nodeType === 3) return node.nodeValue;
+        if (node.nodeType !== 1 || /^(select|textarea|script|style)$/.test(node.localName)) return '';
+        if (!root) {
+            const style = styleOf(node);
+            if (style.display === 'none' || style.visibility !== 'visible') return '';
+        }
+        return Array.from(node.childNodes, child => labelText(child, false)).join('');
+    }
+    function labelOf(el) {
+        const root = el.getRootNode();
+        const refs = (attr(el, 'aria-labelledby') || '').split(/\s+/).filter(Boolean)
+            .map(id => root.getElementById?.(id) || document.getElementById(id)).filter(Boolean);
+        if (refs.length) return clean(refs.map(n => labelText(n)).join(' ')).replace(/\s*[:：]$/, '');
+        const labels = Array.from(el.labels || []);
+        if (labels.length) return clean(labels.map(n => labelText(n)).join(' ')).replace(/\s*[:：]$/, '');
+        return clean(attr(el, 'aria-label') || (el.localName === 'input' || el.localName === 'select' || el.localName === 'textarea' ? '' : labelText(el))
+            || el.placeholder || el.title || el.name || '') || 'Campo sem rótulo';
+    }
+
+    function choice(el, label = labelOf(el)) {
+        if (emitted.has(el)) return;
+        emitted.add(el);
+        const native = el.localName === 'input';
+        const inner = !native && !['aria-checked', 'aria-pressed', 'aria-selected'].some(a => el.hasAttribute(a)) && el.querySelector('input[type="checkbox"], input[type="radio"]');
+        const mark = native ? (el.indeterminate ? '-' : el.checked ? 'x' : ' ')
+            : inner ? (inner.checked ? 'x' : ' ')
+            : attr(el, 'aria-checked') === 'mixed' ? '-' : (attr(el, 'aria-checked') === 'true' || attr(el, 'aria-pressed') === 'true' || attr(el, 'aria-selected') === 'true') ? 'x' : ' ';
+        const kind = attr(el, 'role') === 'switch' ? ' _(switch)_' : '';
+        flush();
+        if (pending === null && !cell) pending = indent ? indent.slice(0, -2) + '- ' : '- ';
+        push(`[${mark}] ${esc(label)}${kind}${states(el)}`);
+    }
+
+    function field(el) {
+        const type = (el.type || '').toLowerCase();
+        const label = esc(labelOf(el));
+        const notes = [];
+        if (el.required || attr(el, 'aria-required') === 'true') notes.push('obrigatório');
+        if (el.readOnly) notes.push('somente leitura');
+        if (el.maxLength > 0) notes.push(`máx. ${el.maxLength} caracteres`);
+        let value;
+        if (el.localName === 'select') {
+            const options = Array.from(el.options).map(o => clean(o.text));
+            const selected = Array.from(el.selectedOptions).map(o => clean(o.text));
+            if (el.multiple || el.size > 1) {
+                flush();
+                push(`**${label}:**${states(el)}`);
+                Array.from(el.options).forEach(o => { pending = indent + '- '; push(`[${o.selected ? 'x' : ' '}] ${esc(clean(o.text))}`); });
+                return;
+            }
+            value = esc(selected.join(', ')) || '_Não preenchido_';
+            if (options.length) notes.push(options.length <= 30 ? `opções: ${options.map(esc).join(' / ')}` : `${options.length} opções`);
+        } else if (type === 'password' || SECRET.test(attr(el, 'autocomplete') || '')
+            || isSecretName([el.name, el.id, labelOf(el)].join(' ')) || isCardNumber(el.value || '')) {
+            value = el.value ? '_(oculto)_' : '_Não preenchido_';
+        } else if (type === 'file') {
+            value = Array.from(el.files || [], f => esc(f.name)).join(', ') || '_Nenhum arquivo_';
+        } else if (el.localName === 'input' || el.localName === 'textarea') {
+            value = el.value ? esc(el.value) : '_Não preenchido_';
+            if (type === 'range') notes.push(`de ${el.min || 0} a ${el.max || 100}`);
+        } else {
+            const now = attr(el, 'aria-valuetext') || attr(el, 'aria-valuenow') || (el.value != null && el.localName !== 'li' ? String(el.value) : '') || clean(el.textContent);
+            value = now ? esc(now) : '_Não preenchido_';
+            if (attr(el, 'aria-valuemax')) notes.push(`de ${attr(el, 'aria-valuemin') || 0} a ${attr(el, 'aria-valuemax')}`);
+        }
+        if (attr(el, 'aria-invalid') === 'true') {
+            const root = el.getRootNode();
+            const own = attr(el, 'aria-errormessage');
+            const ids = (own || attr(el, 'aria-describedby') || '').split(/\s+/).filter(Boolean);
+            const error = clean(ids.map(id => root.getElementById?.(id) || document.getElementById(id)).filter(n => n && rendered(n)).map(n => n.textContent).join(' ')).slice(0, 200);
+            // aria-describedby também serve para dica; só aria-errormessage é erro por definição.
+            if (error) notes.push(`${own ? 'erro' : 'mensagem'}: ${esc(error)}`);
+        }
+        const extra = notes.length ? ` _(${notes.join(', ')})_` : '';
+        flush();
+        if (cell) { buf += `${label}: ${value}${extra}${states(el)}`; return; }
+        push(`**${label}:** ${value}${extra}${states(el)}`);
+    }
+
+    // Retorna true se tratou o elemento como controle.
+    function control(el) {
+        const tag = el.localName;
+        const role = attr(el, 'role');
+        if (el.matches('.inputarea, .xterm-helper-textarea')) return true;
+        if (tag === 'input') {
+            const type = (el.type || '').toLowerCase();
+            if (type === 'hidden') return true;
+            if (type === 'checkbox' || type === 'radio') { choice(el); return true; }
+            if (/^(submit|button|reset|image)$/.test(type)) { buf += ` [botão: ${esc(el.value || el.alt || type)}]${states(el)} `; return true; }
+            field(el); return true;
+        }
+        if (tag === 'textarea' || tag === 'select' || tag === 'progress' || tag === 'meter') { field(el); return true; }
+        if (CHOICE_ROLES.has(role)) { choice(el); return true; }
+        if (VALUE_ROLES.has(role) && !el.isContentEditable) { field(el); return true; }
+        return false;
+    }
+
+    function codeSource(el, style) {
+        if (el.matches('.monaco-editor')) return el.querySelector('.view-lines') || el;
+        if (el.matches('.xterm')) return el.querySelector('.xterm-rows') || el;
+        if (el.matches('.ace_editor')) return el.querySelector('.ace_text-layer') || el;
+        if (el.matches('.CodeMirror')) return el.querySelector('.CodeMirror-code') || el;
+        if (el.localName === 'pre' || el.matches('.cm-content')) return el;
+        const preformatted = (style.whiteSpaceCollapse || '').startsWith('preserve') || /^(pre|break)/.test(style.whiteSpace);
+        if ((attr(el, 'role') === 'log' || preformatted) && !/^inline/.test(style.display) && !el.querySelector(STRUCTURE)) return el;
         return null;
     }
-    function isChecked(el) {
-        if (el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(el.type)) return el.checked;
-        if (el.getAttribute('aria-checked') === 'true') return true;
-        if (el.getAttribute('aria-checked') === 'false') return false;
-        const native = el.querySelector?.('input[type="checkbox"], input[type="radio"]');
-        if (native) return native.checked;
-        return /(^|[\s_-])(checked|active)(\s|$)/.test(el.getAttribute('class') || '');
+    function code(el, src) {
+        let lines;
+        if (src.matches('.view-lines')) {
+            // Monaco reaproveita linhas fora de ordem; a ordem visual vem do top.
+            lines = Array.from(src.children).sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top)).map(l => l.textContent);
+        } else {
+            // Log com um bloco por linha (Portainer: <pre><div class="line"><p>): innerText poria linha em branco entre elas.
+            const kids = Array.from(src.children).filter(c => rendered(c));
+            const perLine = src.localName === 'pre' && kids.length > 1
+                && !Array.from(src.childNodes).some(n => n.nodeType === 3 && n.nodeValue.trim())
+                && kids.every(c => !/^inline/.test(styleOf(c).display));
+            lines = perLine ? kids.map(c => c.innerText.replace(/^\n+|\s+$/g, '')) : [src.innerText];
+        }
+        const text = lines.join('\n').replace(/\u00a0/g, ' ').replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '').replace(/\s+$/, '');
+        if (cell) { if (text.trim()) buf += inlineCode(text.replace(/\n/g, ' ↵ ')); return; }
+        flush();
+        if (!text.trim()) {
+            if (el.matches('.xterm')) push('_(terminal sem texto no DOM: renderizado em canvas)_');
+            return;
+        }
+        const fence = '`'.repeat(Math.max(3, ...(text.match(/`+/g) || []).map(r => r.length + 1)));
+        const lang = ((el.className + ' ' + (el.querySelector('code')?.className || '')).match(/(?:language|lang)-([\w+#-]+)/) || [])[1] || '';
+        push(`${fence}${lang}\n${text}\n${fence}`);
     }
-    function escapeMarkdown(value) {
-        return String(value ?? '').replace(/([\\`*_{}\[\]<>|])/g, '\\$1');
+
+    function table(el) {
+        const rows = Array.from(el.querySelectorAll(ROW)).filter(r => r.closest(TABLE) === el && rendered(r));
+        // Grids com colunas fixadas repetem a mesma linha lógica em vários contêineres.
+        const merged = new Map();
+        rows.forEach((r, i) => {
+            const key = attr(r, 'aria-rowindex') ?? `#${i}`;
+            let cells = Array.from(r.querySelectorAll(CELL)).filter(c => c.closest(ROW) === r && rendered(c));
+            if (!r.querySelector(CELL)) cells = [r]; // linha sem célula: o conteúdo inteiro vira uma célula
+            const entry = merged.get(key) || { row: r, cells: [] };
+            entry.cells.push(...cells);
+            merged.set(key, entry);
+        });
+        // Só colunas que têm alguma célula, em ordem: aria-colindex alto ou colunas virtualizadas não alargam a tabela.
+        const indexes = [...new Set(Array.from(merged.values()).flatMap(e => e.cells.map(c => +attr(c, 'aria-colindex')).filter(n => n > 0)))].sort((a, b) => a - b);
+        const position = new Map(indexes.map((col, i) => [col, i]));
+        const grid = Array.from(merged.values()).map(({ row, cells }) => {
+            if (cells.some(c => attr(c, 'aria-colindex'))) cells.sort((a, b) => attr(a, 'aria-colindex') - attr(b, 'aria-colindex'));
+            const header = cells.length > 0 && (row.closest('thead') || cells.every(c => c.localName === 'th' || attr(c, 'role') === 'columnheader'));
+            const values = [];
+            cells.forEach((c, i) => {
+                // Grid esparso: coluna ausente vira célula vazia, sem deslocar as seguintes.
+                const col = +attr(c, 'aria-colindex');
+                while (col > 0 && values.length < position.get(col)) values.push(' ');
+                let text = capture(() => walkChildren(c, styleOf(c))).replace(/\n+/g, ' <br> ').replace(/(?<!\\)\|/g, '\\|');
+                if (i === 0) text = (states(row).trim() + ' ' + text).trim();
+                const sort = attr(c, 'aria-sort');
+                if (sort === 'ascending' || sort === 'descending') text += sort === 'ascending' ? ' ↑' : ' ↓';
+                values.push(text || ' ');
+                for (let n = 1; n < (c.colSpan || +attr(c, 'aria-colspan') || 1); n++) values.push(' ');
+            });
+            return { header, values };
+        }).filter(r => r.values.length);
+        if (!grid.length || grid.every(r => r.values.every(v => !v.trim()))) return false;
+        const width = Math.max(...grid.map(r => r.values.length));
+        const pad = v => v.concat(Array(width - v.length).fill(' '));
+        const headIndex = grid.findIndex(r => r.header);
+        const head = headIndex >= 0 ? grid.splice(headIndex, 1)[0].values : Array.from({ length: width }, (_, i) => `Coluna ${i + 1}`);
+        const lines = [pad(head), Array(width).fill('---'), ...grid.map(r => pad(r.values))].map(v => `| ${v.join(' | ')} |`);
+        const caption = el.querySelector(':scope > caption');
+        const total = +attr(el, 'aria-rowcount');
+        flush();
+        if (caption) push(`**${esc(clean(caption.textContent))}**`);
+        push(lines.join('\n'));
+        if (total > 0 && total > merged.size) push(`_(${merged.size} de ${total} linhas renderizadas; o restante não está carregado na página)_`);
     }
-    function referencedElements(el, attribute) {
-        return (el.getAttribute(attribute) || '').split(/\s+/).filter(Boolean)
-            .map(id => el.ownerDocument.getElementById(id)).filter(Boolean);
+    function isLayoutTable(el) {
+        if (/^(presentation|none)$/.test(attr(el, 'role') || '')) return true;
+        if (el.querySelector(TABLE)) return true;
+        return el.localName === 'table' && !el.querySelector('th, [role="columnheader"]') && !!el.querySelector('td div, td p, td ul, td form, td h1, td h2, td h3');
     }
-    function labelInfo(inp) {
-        const refs = referencedElements(inp, 'aria-labelledby');
-        if (refs.length) return { text: refs.map(el => el.innerText || el.textContent).join(' ').trim(), nodes: refs };
-        const labels = Array.from(inp.labels || []);
-        if (labels.length) return { text: labels.map(el => el.innerText || el.textContent).join(' ').trim(), nodes: labels };
-        if (inp.getAttribute('aria-label')) return { text: inp.getAttribute('aria-label').trim(), nodes: [] };
-        // Search only nearby preceding content, never a whole page/form wrapper.
-        let cursor = inp;
-        for (let depth = 0; cursor && depth < 5; depth++, cursor = cursor.parentElement) {
-            const prev = cursor.previousElementSibling;
-            if (prev && !prev.querySelector(CONTROL_SELECTOR) && !prev.matches(CONTROL_SELECTOR) && isVisible(prev)) {
-                const text = (prev.innerText || '').trim();
-                if (text && !/^(máx|max|limite)\b/i.test(text)) return { text, nodes: [prev] };
-            }
-            if (cursor.parentElement?.matches('form, main, body, fieldset, [role="group"], [role="radiogroup"]')) break;
-        }
-        const ownText = inp.matches(CONTROL_SELECTOR) && !['INPUT', 'SELECT', 'TEXTAREA'].includes(inp.tagName) ? (inp.innerText || '').trim() : '';
-        return { text: ownText || inp.placeholder || inp.title || inp.name || inp.id || 'Campo sem rótulo', nodes: [] };
+
+    function frame(el) {
+        reachedFrames.add(el);
+        let doc = null;
+        try { doc = el.contentDocument; } catch (_) {}
+        const src = el.src || attr(el, 'src') || 'about:blank';
+        flush();
+        if (doc?.body) {
+            push(`**[iframe: ${esc(src)}]**`);
+            walk(doc.body);
+            flush();
+            push(`**[fim do iframe]**`);
+        } else push(`_[iframe de outra origem: ${esc(src)}; conteúdo anexado ao final, se o navegador permitir]_`);
     }
-    function resolveHumanLabel(inp) { return labelInfo(inp).text; }
 
-    // ------------------------------------------------------------------
-    // EXTRATORES MODULARES ESPECIALIZADOS
-    // ------------------------------------------------------------------
+    function wrap(el, style, format) {
+        const before0 = resets;
+        const blocks = out.length;
+        let start = buf.length;
+        walkChildren(el, style);
+        if (out.length === blocks) {
+            // Um flush vazio dentro do elemento zerou buf: o conteúdo inline começa em 0.
+            if (resets !== before0) start = 0;
+            const [, before, inner, after] = buf.slice(start).match(/^(\s*)([\s\S]*?)(\s*)$/);
+            buf = buf.slice(0, start) + before + format(inner) + after;
+        } else tail(format(null));
+    }
 
-    // 1. Metadata & Breadcrumbs
-    const MetadataExtractor = {
-        id: 'metadata',
-        priority: 10,
-        canHandle: () => true,
-        extract: async (ctx) => {
-            const bladeTitleEl = ctx.root.querySelector('.fxs-blade-title, [class*="blade-title"], h1, [role="heading"][aria-level="1"], [class*="title-text"]');
-            const bladeTitle = (bladeTitleEl?.innerText || ctx.document.title || 'Sem título').replace(/✕|\n/g, ' ').trim();
-            ctx.pageTitle = bladeTitle;
-            const titleEl = bladeTitleEl;
-            if (titleEl) ctx.registry.claimDescendants(titleEl, 'metadata');
-            const now = new Date().toLocaleString('pt-BR');
-
-            let md = `---\ntitle: "${bladeTitle.replace(/"/g, '\\"')}"\nsource: "${ctx.url}"\ndate: "${now}"\ntags:\n  - snapmd\n  - universal-snapshot\n---\n\n`;
-            md += `# ${bladeTitle}\n\n> **Fonte:** [${ctx.url}](${ctx.url})\n> **Capturado em:** ${now}\n\n`;
-
-            try {
-                const breadcrumbEl = ctx.root.querySelector('.breadcrumb, [aria-label="breadcrumb"], ol[class*="breadcrumb"], div[class*="breadcrumb"], .fxs-breadcrumb');
-                if (breadcrumbEl) {
-                    ctx.registry.claimDescendants(breadcrumbEl, 'metadata');
-                    const crumbs = Array.from(breadcrumbEl.querySelectorAll('li, a, span'))
-                        .map(c => (c.innerText || '').trim())
-                        .filter(c => c && c !== '/' && c !== '>');
-                    const uniqueCrumbs = Array.from(new Set(crumbs));
-                    if (uniqueCrumbs.length > 0) {
-                        md += `📁 **Navegação:** \`${uniqueCrumbs.join(' > ')}\`\n\n`;
-                    }
-                }
-            } catch (_) {}
-
-            return [{ type: 'metadata', priority: 10, markdown: md, title: bladeTitle }];
-        }
-    };
-
-    // 2. Modais e Diálogos Ativos em Primeiro Plano
-    const ModalExtractor = {
-        id: 'modal',
-        priority: 20,
-        canHandle: (ctx) => {
-            return !!ctx.root.querySelector('.p-dialog:not(.p-dialog-hidden), [role="dialog"], .modal.show, div.p-dynamic-dialog, .drawer.open');
-        },
-        extract: async (ctx) => {
-            const activeDialog = Array.from(ctx.root.querySelectorAll('.p-dialog:not(.p-dialog-hidden), [role="dialog"], .modal.show, div.p-dynamic-dialog, .drawer.open')).find(isVisible);
-            if (!activeDialog) return [];
-
-            const modalHeading = activeDialog.querySelector('.p-dialog-header, .p-dialog-title, h1, h2, h3');
-            if (modalHeading) ctx.registry.claimDescendants(modalHeading, 'modal');
-
-            const dialogHeader = (activeDialog.querySelector('.p-dialog-header, .p-dialog-title, h1, h2, h3, [class*="header"], [class*="title"]')?.innerText || 'Diálogo Ativo').replace(/✕|\n/g, '').trim();
-            let md = `## 🪟 Diálogo / Modal Ativo: ${dialogHeader}\n\n`;
-
-            const contextArea = activeDialog.querySelector('.p-dialog-content > div:first-child, [class*="context"], [class*="user"], [class*="info"]');
-            if (contextArea) {
-                ctx.registry.claimDescendants(contextArea, 'modal');
-                const rawLines = (contextArea.innerText || '').split('\n').map(l => l.trim()).filter(Boolean);
-                if (rawLines.length > 0) {
-                    md += `### Contexto do Diálogo\n`;
-                    rawLines.slice(0, 10).forEach(l => {
-                        md += `- ${l}\n`;
-                    });
-                    md += `\n`;
-                }
+    function shadowOf(el) {
+        let root = el.shadowRoot;
+        if (!root) try { root = globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el); } catch (_) {}
+        return root || null;
+    }
+    function children(el) {
+        if (el.localName === 'slot') return el.assignedNodes({ flatten: true });
+        const root = shadowOf(el);
+        return root ? root.childNodes : el.childNodes;
+    }
+    // Todos os iframes, inclusive em shadow DOM e em iframes de mesma origem que a caminhada pulou.
+    function allFrames(root, found = []) {
+        for (const el of root.querySelectorAll('*')) {
+            if (el.localName === 'iframe' || el.localName === 'frame') {
+                found.push(el);
+                try { if (el.contentDocument) allFrames(el.contentDocument, found); } catch (_) {}
             }
-
-            return [{ type: 'modal', priority: 20, markdown: md }];
+            const shadow = shadowOf(el);
+            if (shadow) allFrames(shadow, found);
         }
-    };
-
-    // 3. Banners e Alertas Informativos (Prioridade 20)
-    const BannerNoticeExtractor = {
-        id: 'banners',
-        priority: 20,
-        canHandle: (ctx) => {
-            return !!ctx.root.querySelector('.fxc-infobar, .msportalfx-infobar, [role="alert"], [class*="infobar"], div[class*="notice"], div[class*="warning"], div[class*="banner"]');
-        },
-        extract: async (ctx) => {
-            const notices = Array.from(ctx.root.querySelectorAll('.fxc-infobar, .msportalfx-infobar, [role="alert"], [class*="infobar"], div[class*="notice"], div[class*="warning"], div[class*="banner"]'));
-            const bannerBlocks = [];
-            const seenBanners = new Set();
-
-            notices.forEach(n => {
-                if (!isVisible(n) || ctx.registry.isClaimed(n) || n.closest('nav, .fxs-sidebar-menu, .fxs-blade-content-navigation')) return;
-                ctx.registry.claimDescendantsSafely(n, 'banners');
-
-                const text = (n.innerText || n.textContent || '').replace(/✕|\n/g, ' ').replace(/\s+/g, ' ').trim();
-                if (text && text.length > 15 && !seenBanners.has(text.slice(0, 60))) {
-                    seenBanners.add(text.slice(0, 60));
-
-                    let callout = 'NOTE';
-                    const cls = (n.className || '').toLowerCase();
-                    const lowerText = text.toLowerCase();
-                    if (cls.includes('warning') || cls.includes('warn') || lowerText.includes('consentimento') || lowerText.includes('revogar') || lowerText.includes('atenção')) {
-                        callout = 'WARNING';
-                    } else if (cls.includes('error') || cls.includes('danger') || cls.includes('bloqueado')) {
-                        callout = 'CAUTION';
-                    }
-
-                    bannerBlocks.push(`> [!${callout}]\n> ${text}`);
-                }
-            });
-
-            if (bannerBlocks.length === 0) return [];
-
-            let md = `## ⚠️ Avisos e Informações da Página\n\n` + bannerBlocks.join('\n\n') + '\n\n';
-            return [{ type: 'banners', priority: 20, markdown: md }];
-        }
-    };
-
-    // 4. Estágios e Jobs de Pipelines (Prioridade 25 - Azure DevOps, GitHub Actions, CI/CD)
-    const PipelineStagesExtractor = {
-        id: 'stages',
-        priority: 25,
-        canHandle: (ctx) => {
-            return !!ctx.root.querySelector('[role="tree"], .bolt-tree, [class*="jobs-tree"], [class*="stages-tree"], div[aria-label*="Jobs"], [class*="job-list"]');
-        },
-        extract: async (ctx) => {
-            const trees = Array.from(ctx.root.querySelectorAll('[role="tree"], .bolt-tree, [class*="jobs-tree"], [class*="stages-tree"], div[aria-label*="Jobs"], [class*="job-list"]'));
-            const stages = [];
-            const seenStages = new Set();
-
-            trees.forEach(tree => {
-                if (ctx.registry.isClaimed(tree)) return;
-
-                const items = Array.from(tree.querySelectorAll('[role="treeitem"], .bolt-list-row, [class*="job-item"], [class*="stage-item"]'));
-                items.forEach(it => {
-                    const txt = (it.innerText || it.textContent || '').split('\n').map(l => l.trim()).filter(Boolean).join(' — ');
-                    if (!txt || txt.length > 120 || seenStages.has(txt.toLowerCase())) return;
-                    seenStages.add(txt.toLowerCase());
-                    ctx.registry.claim(it, 'stages');
-
-                    const isSelected = it.getAttribute('aria-selected') === 'true' || it.classList.contains('selected') || it.classList.contains('active');
-                    stages.push(isSelected ? `- [x] **${txt}** (Selecionado)` : `- [ ] ${txt}`);
-                });
-            });
-
-            if (stages.length === 0) return [];
-            let md = `## 🚀 Estágios e Jobs da Execução (Pipeline)\n\n` + stages.join('\n') + '\n\n';
-            return [{ type: 'stages', priority: 25, markdown: md }];
-        }
-    };
-
-    // 5. Ações Disponíveis na Tela / Command Bars (Prioridade 30)
-    const ActionBarExtractor = {
-        id: 'actions',
-        priority: 30,
-        canHandle: (ctx) => {
-            return !!ctx.root.querySelector('.fxs-command-bar, .azc-toolbar, [role="toolbar"], .fxc-commandBar, .fxs-toolbar, button, a.btn, [role="button"]');
-        },
-        extract: async (ctx) => {
-            const actionElements = Array.from(ctx.root.querySelectorAll(
-                '.fxs-command-bar-item, .fxc-commandBar-item, .azc-toolbar-item, .fxs-toolbar button, [role="toolbar"] button, [role="toolbar"] [role="button"], button, a.btn, [role="button"]'
-            )).filter(b => {
-                if (!isVisible(b) || ctx.registry.isClaimed(b)) return false;
-                if (b.closest('nav, .fxs-sidebar-menu, .fxs-blade-content-navigation, table, [role="grid"], .fxc-grid, [class*="user-menu"]')) return false;
-
-                const txt = (b.innerText || b.textContent || '').trim();
-                if (txt.includes('@') || txt.includes('.assis') || txt.length < 2 || txt.length > 70 || txt.includes('\n\n')) return false;
-                if (['fechar', 'close', '✕', 'x'].includes(txt.toLowerCase())) return false;
-                return true;
-            });
-
-            if (actionElements.length === 0) return [];
-
-            const actionsList = [];
-            const seenActions = new Set();
-            actionElements.forEach(btn => {
-                ctx.registry.claim(btn, 'actions');
-                const bText = (btn.innerText || btn.textContent || '').replace(/[\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
-                if (seenActions.has(bText.toLowerCase())) return;
-                seenActions.add(bText.toLowerCase());
-
-                const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.classList.contains('disabled');
-                actionsList.push(`- [ ] **${bText}**${isDisabled ? ' _(Desabilitado)_' : ''}`);
-            });
-
-            if (actionsList.length === 0) return [];
-
-            let md = `## ⚡ Ações Disponíveis na Tela\n\n` + actionsList.slice(0, 15).join('\n') + '\n\n';
-            return [{ type: 'actions', priority: 30, markdown: md }];
-        }
-    };
-
-    // 6. Terminais, Logs e Blocos de Código (Prioridade 35 - Executa antes de tabelas genéricas)
-    const LogTerminalExtractor = {
-        id: 'terminal',
-        priority: 35,
-        canHandle: (ctx) => {
-            return !!ctx.root.querySelector('pre, code, .monaco-editor, .ace_editor, textarea[readonly], [class*="log-viewer"], [class*="logs-viewer"], [class*="logviewer"], [class*="virtualized-log-viewer"], [class*="terminal"], [class*="console"], [id*="log-viewer"], [id*="logs"], [class*="logs-container"], .xterm, logs-viewer, log-viewer, .bolt-terminal, [class*="log-content"], div[class*="logViewer"], .log-view, div[class*="log-line"]');
-        },
-        extract: async (ctx) => {
-            const codeBlocks = Array.from(ctx.root.querySelectorAll('pre, code, .monaco-editor, .ace_editor, textarea[readonly], [class*="log-viewer"], [class*="logs-viewer"], [class*="logviewer"], [class*="virtualized-log-viewer"], [class*="terminal"], [class*="console"], [id*="log-viewer"], [id*="logs"], [class*="logs-container"], .xterm, logs-viewer, log-viewer, .bolt-terminal, [class*="log-content"], div[class*="logViewer"], .log-view'));
-            const capturedCodes = [];
-            const seenCodes = new Set();
-
-            codeBlocks.forEach(cb => {
-                if (ctx.registry.isClaimed(cb) || (cb.tagName === 'CODE' && cb.closest('pre'))) return;
-                ctx.registry.claimDescendantsSafely(cb, 'terminal');
-
-                let codeContent = '';
-                const lineEls = Array.from(cb.querySelectorAll('.log-line-content, .log-line, .view-line, .ace_line, div[class*="log-line"]'));
-                
-                if (lineEls.length > 0) {
-                    codeContent = lineEls.map(l => (l.innerText || l.textContent || '').trimEnd()).filter(Boolean).join('\n');
-                } else if (cb.classList && cb.classList.contains('xterm')) {
-                    const rows = Array.from(cb.querySelectorAll('.xterm-rows > div'));
-                    codeContent = rows.map(r => r.innerText || '').join('\n');
-                } else {
-                    codeContent = (cb.value || cb.innerText || cb.textContent || '').toString();
-                }
-
-                codeContent = codeContent.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '').trim();
-
-                if (codeContent.length > 10 && !seenCodes.has(codeContent.slice(0, 80))) {
-                    seenCodes.add(codeContent.slice(0, 80));
-
-                    let lang = 'text';
-                    if (codeContent.startsWith('{') || codeContent.startsWith('[')) lang = 'json';
-                    else if (codeContent.includes('version:') || codeContent.includes('services:')) lang = 'yaml';
-                    else if (codeContent.includes('function') || codeContent.includes('const ') || codeContent.includes('import ')) lang = 'javascript';
-                    else if (codeContent.includes('agent v') || codeContent.includes('Listening for Jobs') || codeContent.includes('Connecting to') || codeContent.includes('Triggered by') || codeContent.includes('Timing')) lang = 'text';
-                    else if (codeContent.includes('docker ') || codeContent.includes('curl ') || codeContent.includes('kubectl ')) lang = 'bash';
-
-                    capturedCodes.push(`\`\`\`${lang}\n${codeContent}\n\`\`\``);
-                }
-            });
-
-            if (capturedCodes.length === 0) return [];
-
-            let md = `## 📜 Logs, Terminal e Saída de Execução\n\n` + capturedCodes.slice(0, 4).join('\n\n') + '\n\n';
-            return [{ type: 'terminal', priority: 35, markdown: md }];
-        }
-    };
-
-    // 7. Tabelas de Dados e Grids ARIA (Prioridade 40 - Ignora containers de log)
-    const TableExtractor = {
-        id: 'table',
-        priority: 40,
-        canHandle: (ctx) => {
-            return !!ctx.root.querySelector('table, [role="table"], [role="grid"], .fxc-grid, .azc-grid');
-        },
-        extract: async (ctx) => {
-            const grids = Array.from(ctx.root.querySelectorAll('table, [role="table"], [role="grid"], .fxc-grid, .azc-grid'));
-            if (grids.length === 0) return [];
-
-            let tablesOutput = '';
-            grids.forEach((tbl, tIdx) => {
-                if (ctx.registry.isClaimed(tbl) || tbl.closest('nav, .fxs-sidebar-menu, .fxs-blade-content-navigation')) return;
-
-                // Não processa containers de logs como tabelas
-                const isLogViewer = tbl.closest('[class*="log-viewer"], [class*="logviewer"], [class*="virtualized-log-viewer"], .monaco-editor, pre, code') ||
-                                    (tbl.className && (tbl.className.includes('log-viewer') || tbl.className.includes('virtualized-log-viewer')));
-                if (isLogViewer) return;
-
-                // Cabeçalhos (th, columnheader ou primeira linha)
-                let ths = Array.from(tbl.querySelectorAll('thead th, [role="columnheader"], .fxc-grid-header th, .fxc-grid-cell.fxc-grid-header-cell, tr:first-child th'))
-                    .map(th => (th.innerText || th.textContent || '').replace(/\n/g, ' ').trim())
-                    .filter(Boolean);
-
-                // Linhas de dados (exclui linhas que contêm headers de coluna)
-                let rows = Array.from(tbl.querySelectorAll('tbody tr, [role="row"]'))
-                    .filter(r => !r.querySelector('[role="columnheader"]') && !r.closest('thead'));
-
-                if (ths.length === 0 && rows.length > 0) {
-                    const firstRowCells = Array.from(rows[0].querySelectorAll('td, [role="gridcell"], [role="cell"]'));
-                    ths = firstRowCells.map((_, i) => `Coluna ${i + 1}`);
-                }
-
-                if (ths.length === 0 || rows.length === 0) return;
-
-                const colIndices = [];
-                const cleanHeaders = [];
-                ths.forEach((h, idx) => {
-                    const lower = h.toLowerCase();
-                    if (!['', 'filter', 'items per page', 'select', 'ações', 'actions', '...'].includes(lower) && !lower.includes('quick action')) {
-                        colIndices.push(idx);
-                        cleanHeaders.push(h);
-                    }
-                });
-
-                if (cleanHeaders.length === 0) return;
-
-                let tblMd = `### Tabela / Grid ${grids.length > 1 ? `#${tIdx + 1}` : ''}\n\n`;
-                tblMd += '| ' + cleanHeaders.join(' | ') + ' |\n';
-                tblMd += '| ' + cleanHeaders.map(() => '---').join(' | ') + ' |\n';
-
-                let rowCount = 0;
-                rows.forEach(r => {
-                    // Linha de agrupamento (ex: "Microsoft Graph (1)")
-                    const isGroupHeader = r.classList.contains('fxc-grid-group-row') || 
-                                          r.classList.contains('fxc-grid-group') || 
-                                          r.getAttribute('aria-expanded') !== null ||
-                                          r.querySelector('.fxc-grid-group-title, [class*="group"]');
-
-                    if (isGroupHeader) {
-                        const groupTitle = (r.innerText || r.textContent || '').replace(/[\n|]/g, ' ').replace(/\s+/g, ' ').trim();
-                        if (groupTitle) {
-                            tblMd += `| **${groupTitle}** | ` + cleanHeaders.slice(1).map(() => '---').join(' | ') + ' |\n';
-                            rowCount++;
-                        }
-                        return;
-                    }
-
-                    const cells = Array.from(r.querySelectorAll('td, [role="gridcell"], [role="cell"]'));
-                    if (cells.length === 0) return;
-
-                    const rowData = [];
-                    colIndices.forEach(idx => {
-                        const cell = cells[idx];
-                        let cellText = cell ? resolveFullText(cell).replace(/[\n|]/g, ' ').replace(/\s+/g, ' ').trim() : '-';
-                        rowData.push(cellText || '-');
-                    });
-
-                    if (rowData.some(d => d !== '-')) {
-                        tblMd += '| ' + rowData.join(' | ') + ' |\n';
-                        rowCount++;
-                    }
-                });
-
-                if (rowCount > 0) {
-                    ctx.registry.claimDescendantsSafely(tbl, 'table');
-                    tablesOutput += tblMd + '\n';
-                }
-            });
-
-            if (!tablesOutput) return [];
-            return [{ type: 'table', priority: 40, markdown: `## 📊 Tabelas de Dados e Permissões\n\n` + tablesOutput }];
-        }
-    };
-
-    // 7. Menus e Navegação da Tela (Prioridade 60 - Reivindicação Estrita sem Canibalizar Lâminas)
-    const MenuTreeExtractor = {
-        id: 'menu',
-        priority: 60,
-        canHandle: (ctx) => {
-            // NUNCA incluir classes genéricas de blade como 'menu-blade' ou 'ApplicationMenuBlade'
-            return !!ctx.root.querySelector('nav, [role="navigation"], .fxs-sidebar-menu, .fxs-blade-content-navigation, aside.sidebar, [class*="sidebar-nav"], [class*="left-nav"]');
-        },
-        extract: async (ctx) => {
-            const navContainers = Array.from(ctx.root.querySelectorAll(
-                'nav, [role="navigation"], .fxs-sidebar-menu, .fxs-blade-content-navigation, aside.sidebar, [class*="sidebar-nav"], [class*="left-nav"]'
-            )).filter(nav => {
-                // Desqualificador crítico: se for a lâmina inteira ou contiver tabelas/grids/banners, NÃO é um menu
-                if (!isVisible(nav)) return false;
-                if (nav.classList.contains('fxs-blade') || nav.classList.contains('ApplicationMenuBlade')) return false;
-                if (nav.querySelector('.fxc-grid, [role="grid"], table, .fxc-infobar, .fxs-command-bar, [role="toolbar"]')) return false;
-                return true;
-            });
-
-            const menuItemsFound = [];
-            const seenMenus = new Set();
-            const noiseTexts = ['nenhum resultado', 'pesquisar', 'saiba mais', 'fechar', 'voltar', 'atualizar', 'comentários'];
-
-            navContainers.forEach(nav => {
-                // NÃO fazemos claimDescendants(nav) para não devorar nós irmãos ou subárvores!
-                const items = Array.from(nav.querySelectorAll('a, [role="menuitem"], [role="tab"], [role="treeitem"], li.fxs-menu-item, div.fxs-menu-item'));
-
-                const groupList = [];
-                items.forEach(it => {
-                    // Rejeita itens que estejam dentro de toolbars, tabelas ou conteúdo de lâmina
-                    if (it.closest('.fxs-toolbar, [role="toolbar"], .fxc-commandBar, [role="grid"], table, .fxc-grid')) return;
-
-                    const text = (it.innerText || it.textContent || '').split('\n')[0].trim();
-                    if (!text || text.length > 50 || seenMenus.has(text.toLowerCase())) return;
-                    if (noiseTexts.some(n => text.toLowerCase().includes(n))) return;
-
-                    seenMenus.add(text.toLowerCase());
-                    ctx.registry.claim(it, 'menu'); // Claim granular estrito do nó!
-
-                    const directTargets = [it, it.parentElement].filter(Boolean);
-                    const isActive = directTargets.some(el => 
-                        el.classList.contains('active') ||
-                        el.classList.contains('selected') ||
-                        el.classList.contains('fxs-menu-item-selected') ||
-                        el.className.includes('selected') ||
-                        el.getAttribute('aria-selected') === 'true' ||
-                        el.getAttribute('aria-current') === 'page'
-                    );
-
-                    groupList.push(isActive ? `- [x] **${text}** (Ativo)` : `- [ ] ${text}`);
-                });
-
-                if (groupList.length > 0) {
-                    menuItemsFound.push(groupList.join('\n'));
-                }
-            });
-
-            if (menuItemsFound.length === 0) return [];
-
-            let md = `## 🧭 Menu Lateral e Opções Disponíveis na Tela\n\n` + menuItemsFound.slice(0, 8).join('\n\n') + '\n\n';
-            return [{ type: 'menu', priority: 60, markdown: md }];
-        }
-    };
-
-    // 8. Propriedades e Chave-Valor (Corporate Blades, Entra ID, Portais)
-    const CorporateBladeExtractor = {
-        id: 'keyvalue',
-        priority: 70,
-        canHandle: () => true,
-        extract: async (ctx) => {
-            const propPairs = [];
-            const visitedPairs = new Set();
-
-            // 1. Definition Lists (<dl>, <dt>, <dd>)
-            ctx.root.querySelectorAll('dl').forEach(dl => {
-                if (ctx.registry.isClaimed(dl)) return;
-                ctx.registry.claimDescendants(dl, 'keyvalue');
-
-                const dts = Array.from(dl.querySelectorAll('dt'));
-                const dds = Array.from(dl.querySelectorAll('dd'));
-                dts.forEach((dt, i) => {
-                    const k = (dt.innerText || '').trim();
-                    const v = dds[i] ? resolveFullText(dds[i]) : '';
-                    const pairKey = `${k}::${v}`;
-                    if (k && v && !visitedPairs.has(pairKey)) {
-                        visitedPairs.add(pairKey);
-                        propPairs.push(`- **${k}:** ${v}`);
-                    }
-                });
-            });
-
-            // 2. Linhas de texto com padrão "Chave : Valor" (Entra ID)
-            const textLines = (ctx.root.innerText || '').split('\n').map(l => l.trim()).filter(Boolean);
-            textLines.forEach(line => {
-                if (line.includes(' : ') && line.length < 250) {
-                    const parts = line.split(' : ');
-                    const k = parts[0].trim();
-                    const v = parts.slice(1).join(' : ').trim();
-                    const pairKey = `${k}::${v}`;
-                    if (k && v && k.length < 50 && !visitedPairs.has(pairKey)) {
-                        visitedPairs.add(pairKey);
-                        propPairs.push(`- **${k}:** ${v}`);
-                    }
-                }
-            });
-
-            // 3. Form groups estruturados
-            const candidateRows = Array.from(ctx.root.querySelectorAll(
-                '.form-group, .row, [class*="row"], tr, [class*="setting"], [class*="property"], [class*="field"], .azc-form-group'
-            ));
-
-            candidateRows.forEach(row => {
-                if (ctx.registry.isClaimed(row) || row.closest('table tbody, nav, .sidebar, .fxs-sidebar')) return;
-
-                if (row.querySelector(CONTROL_SELECTOR)) return;
-                const labelEl = row.querySelector('label, [class*="label"], strong, th, .bold, div[class*="name"]');
-                if (labelEl) {
-                    const k = (labelEl.innerText || '').replace(/[\n:]/g, '').trim();
-                    if (!k || k.length > 60) return;
-
-                    const valEl = row.querySelector('input[type="text"], input[readonly], .form-control-static, [class*="value"], [class*="content"]') || row;
-                    let v = resolveFullText(valEl);
-
-                    if (typeof v === 'string' && typeof k === 'string' && v.startsWith(k)) {
-                        v = v.slice(k.length).replace(/^[:\s—]+/, '').trim();
-                    }
-
-                    if (typeof v === 'string') {
-                        v = v.replace(/Copy link|copied|Exibir|Editar|Salvar|Cancel/gi, '').trim();
-                        const pairKey = `${k}::${v}`;
-                        if (v && v !== k && v.length > 0 && !visitedPairs.has(pairKey)) {
-                            visitedPairs.add(pairKey);
-                            propPairs.push(`- **${k}:** ${v}`);
-                            ctx.registry.claimDescendants(row, 'keyvalue');
-                        }
-                    }
-                }
-            });
-
-            if (propPairs.length === 0) return [];
-            return [{ type: 'keyvalue', priority: 70, markdown: `## 📋 Propriedades e Configurações da Tela\n\n` + propPairs.join('\n') + '\n\n' }];
-        }
-    };
-
-    // 9. Controles, Toggles e Formulários Ativos
-    const FormStateExtractor = {
-        id: 'forms', priority: 65,
-        canHandle: ctx => !!ctx.root.querySelector(CONTROL_SELECTOR),
-        extract: async ctx => {
-            const inputs = Array.from(ctx.root.querySelectorAll(CONTROL_SELECTOR));
-            const handled = new Set();
-            const output = [];
-            const eligible = el => isVisible(el) && !['hidden', 'password', 'submit', 'button', 'reset', 'image'].includes(el.type)
-                && !el.closest('nav, .sidebar, .fxs-sidebar');
-            function consumeLabel(info) { info.nodes.forEach(el => ctx.registry.claimDescendants(el, 'forms')); }
-            function details(el) {
-                const hints = referencedElements(el, 'aria-describedby');
-                const nearby = el.parentElement?.querySelectorAll('small, .help-text, .helper-text, [class*="helper"]') || [];
-                const nodes = Array.from(new Set([...hints, ...nearby])).filter(isVisible);
-                nodes.forEach(el => ctx.registry.claimDescendants(el, 'forms'));
-                const text = Array.from(new Set(nodes.map(el => (el.innerText || '').trim()).filter(Boolean)));
-                if (el.maxLength >= 0 && !text.some(t => t.includes(String(el.maxLength)))) text.push(`Máx. ${el.maxLength} caracteres`);
-                if (el.required || el.getAttribute('aria-required') === 'true') text.push('Obrigatório');
-                if (el.disabled || el.getAttribute('aria-disabled') === 'true') text.push('Desabilitado');
-                if (el.readOnly) text.push('Somente leitura');
-                return text.length ? '\n\n' + text.map(t => `_${escapeMarkdown(t)}_`).join(' · ') : '';
-            }
-            inputs.forEach(inp => {
-                if (handled.has(inp) || !eligible(inp)) return;
-                // Visible native child controls carry the live state of custom switch wrappers;
-                // otherwise the wrapper itself reports the state.
-                const nested = Array.from(inp.querySelectorAll(CONTROL_SELECTOR));
-                if (nested.some(eligible)) return;
-                nested.forEach(el => { handled.add(el); ctx.registry.claim(el, 'forms'); });
-                handled.add(inp);
-                ctx.registry.claim(inp, 'forms');
-                const kind = choiceKind(inp);
-                const groupOf = el => el.closest('fieldset, [role="radiogroup"], [role="group"]');
-                const questionOf = el => el.closest('[data-question], [class*="question"], .form-group');
-                const container = groupOf(inp);
-                if (kind) {
-                    const group = inputs.filter(el => eligible(el) && !handled.has(el) && choiceKind(el) === kind &&
-                        (inp.name && el.name === inp.name && el.form === inp.form && el.getRootNode() === inp.getRootNode() ||
-                         container && groupOf(el) === container && questionOf(el) === questionOf(inp) && !(inp.name && el.name && el.name !== inp.name)));
-                    const members = [inp, ...group];
-                    const isOptionLabel = el => members.some(control => Array.from(control.labels || []).includes(el));
-                    const titleIn = scope => scope ? Array.from(scope.querySelectorAll('label, p, h2, h3, h4, [class*="label"]')).find(el => !el.querySelector(CONTROL_SELECTOR) && !isOptionLabel(el) && isVisible(el)) : null;
-                    // A fieldset may hold several questions; then its legend does not name this one.
-                    const mixed = container && Array.from(container.querySelectorAll(CHOICE_SELECTOR)).some(el => eligible(el) && !members.includes(el));
-                    let groupTitle = null;
-                    if (mixed) {
-                        let scope = inp.parentElement;
-                        while (scope && scope !== container && !members.every(el => scope.contains(el))) scope = scope.parentElement;
-                        const narrow = scope && scope !== container && !Array.from(scope.querySelectorAll(CHOICE_SELECTOR)).some(el => eligible(el) && !members.includes(el));
-                        groupTitle = narrow ? titleIn(scope) : null;
-                        if (!groupTitle) {
-                            let anchor = inp;
-                            while (anchor.parentElement && anchor.parentElement !== container && anchor.parentElement.querySelectorAll(CHOICE_SELECTOR).length === 1) anchor = anchor.parentElement;
-                            for (let prev = anchor.previousElementSibling; prev; prev = prev.previousElementSibling) {
-                                if (prev.matches(CONTROL_SELECTOR) || prev.querySelector(CONTROL_SELECTOR)) break;
-                                if (prev.tagName !== 'LEGEND' && isVisible(prev) && (prev.innerText || '').trim()) { groupTitle = prev; break; }
-                            }
-                        }
-                    } else if (members.length > 1) {
-                        groupTitle = titleIn(inp.closest('.form-group, [data-question], [class*="question"], [class*="field"]'));
-                    }
-                    // In a mixed fieldset the legend still names the first question when nothing closer does.
-                    const leadsContainer = !mixed || !Array.from(container.querySelectorAll(CHOICE_SELECTOR)).some(el => eligible(el) && !members.includes(el) && (el.compareDocumentPosition(inp) & Node.DOCUMENT_POSITION_FOLLOWING));
-                    const legend = leadsContainer ? container?.querySelector(':scope > legend') : null;
-                    const question = groupTitle ? { text: groupTitle.innerText, nodes: [groupTitle] } : legend ? { text: legend.innerText, nodes: [legend] } : container && !mixed ? labelInfo(container) : labelInfo(inp);
-                    consumeLabel(question);
-                    const options = members.map(el => {
-                        handled.add(el); ctx.registry.claim(el, 'forms');
-                        const info = labelInfo(el); consumeLabel(info);
-                        const checked = isChecked(el);
-                        return `- [${checked ? 'x' : ' '}] ${escapeMarkdown(info.text === question.text && el.value && el.value !== 'on' ? el.value : info.text)}`;
-                    });
-                    output.push(`### ${escapeMarkdown(question.text)}\n\n${options.join('\n')}${details(inp)}`);
-                    return;
-                }
-                const info = labelInfo(inp); consumeLabel(info);
-                let value = inp.value ?? '';
-                if (inp.tagName === 'SELECT') {
-                    value = Array.from(inp.selectedOptions).map(opt => opt.text.trim()).join(', ') || 'Não preenchido';
-                    const options = Array.from(inp.options).map(opt => opt.text.trim());
-                    value = `Selecionado: ${value}\nOpções: ${options.join(' / ')}`;
-                } else if (inp.getAttribute('role') === 'switch' || inp.matches('por-switch-field, p-inputswitch')) {
-                    value = isChecked(inp) ? 'Marcado (true)' : 'Desmarcado (false)';
-                }
-                const text = String(value).trim() ? escapeMarkdown(value) : 'Não preenchido';
-                output.push(`### ${escapeMarkdown(info.text)}\n\n${text}${details(inp)}`);
-            });
-            return output.length ? [{ type: 'forms', priority: 65, markdown: '## Controles e Formulários Ativos\n\n' + output.join('\n\n') }] : [];
-        }
-    };
-
-    // Preserve remaining visible text nodes without re-emitting specialized blocks.
-    const VisibleContentExtractor = {
-        id: 'content', priority: 90, canHandle: () => true,
-        extract: async ctx => {
-            const walker = ctx.document.createTreeWalker(ctx.root, NodeFilter.SHOW_TEXT);
-            const lines = [];
-            let node;
-            while ((node = walker.nextNode())) {
-                const parent = node.parentElement;
-                if (!parent || !isVisible(parent) || parent.closest('script, style, noscript, template, input, textarea, select, button, nav, [role="navigation"]')) continue;
-                let claimed = false;
-                for (let el = parent; el && el !== ctx.root; el = el.parentElement) {
-                    if (ctx.registry.isClaimed(el)) { claimed = true; break; }
-                }
-                if (claimed) continue;
-                const text = node.textContent.replace(/\s+/g, ' ').trim();
-                if (!text) continue;
-                const heading = parent.closest('h1, h2, h3, h4, h5, h6');
-                if (heading && heading.textContent.trim() === ctx.pageTitle) continue;
-                const block = parent.closest('p, li, h1, h2, h3, h4, h5, h6, div, section') || parent;
-                const previous = lines[lines.length - 1];
-                if (previous?.element === block) previous.text += ' ' + escapeMarkdown(text);
-                else lines.push({ element: block, text: escapeMarkdown(text), heading });
-            }
-            return lines.length ? [{ type: 'content', priority: 90, markdown: '## Conteúdo da Página\n\n' + lines.map(l => (l.heading ? '### ' : '') + l.text).join('\n\n') }] : [];
-        }
-    };
-
-    // ------------------------------------------------------------------
-    // ORCHESTRATOR: Execução do Pipeline com Circuit-Breaker
-    // ------------------------------------------------------------------
-    class PipelineOrchestrator {
-        constructor() {
-            this.extractors = [
-                MetadataExtractor,
-                ModalExtractor,
-                BannerNoticeExtractor,
-                PipelineStagesExtractor,
-                ActionBarExtractor,
-                LogTerminalExtractor,
-                TableExtractor,
-                MenuTreeExtractor,
-                FormStateExtractor,
-                CorporateBladeExtractor,
-                VisibleContentExtractor
-            ];
-        }
-
-        async execute(rawRoot) {
-            const registry = new DOMNodeRegistry();
-            const ctx = {
-                root: rawRoot,
-                document: rawRoot.ownerDocument || document,
-                url: window.location.href || '',
-                registry: registry
-            };
-
-            const blocks = [];
-
-            for (const extractor of this.extractors) {
-                try {
-                    if (extractor.canHandle(ctx)) {
-                        let timeoutId;
-                        let result;
-                        try {
-                            const timeoutPromise = new Promise((_, reject) => {
-                                timeoutId = setTimeout(() => reject(new Error(`Timeout no extrator ${extractor.id}`)), 1500);
-                            });
-                            result = await Promise.race([extractor.extract(ctx), timeoutPromise]);
-                        } finally { clearTimeout(timeoutId); }
-                        if (Array.isArray(result)) {
-                            blocks.push(...result);
-                        }
-                    }
-                } catch (err) {
-                    console.warn(`[SnapMD] Extrator '${extractor.id}' falhou de forma controlada:`, err);
-                }
-            }
-
-            blocks.sort((a, b) => a.priority - b.priority);
-            const markdown = blocks.map(b => b.markdown.trim()).filter(Boolean).join('\n\n');
-
-            const metaBlock = blocks.find(b => b.type === 'metadata');
-            const pageTitle = metaBlock?.title || document.title || 'snapshot';
-
-            return {
-                title: pageTitle,
-                url: window.location.href,
-                markdown: markdown
-            };
+        return found;
+    }
+    function walkChildren(el, style) {
+        const showText = style.visibility === 'visible';
+        const preserve = (style.whiteSpaceCollapse || '').startsWith('preserve') || /^(pre|break)/.test(style.whiteSpace);
+        for (const node of children(el)) {
+            if (node.nodeType === 3) {
+                if (showText && node.nodeValue) buf += esc(preserve ? node.nodeValue.replace(/[ \t]+/g, ' ') : node.nodeValue.replace(/\s+/g, ' '));
+            } else if (node.nodeType === 1) walk(node);
         }
     }
 
-    // ------------------------------------------------------------------
-    // EXECUÇÃO PRINCIPAL
-    // ------------------------------------------------------------------
-    const orchestrator = new PipelineOrchestrator();
-    return await orchestrator.execute(document.body);
+    function walk(el) {
+        const tag = el.localName;
+        if (SKIP.has(tag)) return;
+        if (tag === 'br') { buf += '\n'; return; }
+        const style = styleOf(el);
+        const role = attr(el, 'role');
+        if (style.display === 'none') {
+            // Checkbox/radio escondido com visual próprio (PrimeNG etc.): o estado ainda vale.
+            if (tag === 'input' && /^(checkbox|radio)$/.test(el.type) && style.visibility === 'visible') {
+                const label = labelOf(el);
+                choice(el, label === 'Campo sem rótulo' ? clean(labelText(el.parentElement)) || label : label);
+            }
+            return;
+        }
+        if (!rendered(el, style)) return;
+        if (attr(el, 'aria-hidden') === 'true' && clean(el.textContent).length <= 2 && !el.querySelector('input, select, textarea')) return;
+        if (el.matches(ICON)) return;
+        // Invisível, mas um filho com visibility:visible ainda reaparece na tela.
+        if (style.visibility !== 'visible') return walkChildren(el, style);
+
+        if (tag === 'label' && el.control) {
+            const target = el.control;
+            // O controle sai com o texto deste rótulo; o rótulo não se repete no fluxo.
+            if (el.contains(target) && (rendered(target) || /^(checkbox|radio)$/.test(target.type))) {
+                walk(target);
+                const links = Array.from(el.querySelectorAll('a[href]')).filter(a => !/^(#(?![!/])|javascript:|data:)/i.test(attr(a, 'href')));
+                if (links.length) tail(' ' + links.map(a => `[${esc(clean(a.textContent)) || 'link'}](${a.href})`).join(' '));
+                return;
+            }
+            if (emitted.has(target)) return;
+            if (/^(checkbox|radio)$/.test(target.type)) return choice(target);
+            if (rendered(target)) return;
+        }
+        if (tag === 'iframe' || tag === 'frame') return frame(el);
+        if (control(el)) return;
+
+        const src = codeSource(el, style);
+        if (src) return code(el, src);
+        if (/^(code|kbd|samp|tt)$/.test(tag)) {
+            const t = clean(el.textContent);
+            if (t) buf += inlineCode(t);
+            return;
+        }
+        if (el.matches(TABLE)) {
+            if (!isLayoutTable(el) && table(el) !== false) return;
+        }
+        if (tag === 'img' || role === 'img' || tag === 'svg' && (attr(el, 'aria-label') || attr(el, 'aria-labelledby'))) {
+            const alt = clean(tag === 'img' ? el.alt : attr(el, 'aria-label') || labelOf(el));
+            if (tag !== 'img' && !alt) return walkChildren(el, style);
+            if (alt) buf += tag === 'img' && /^https?:/.test(el.currentSrc || el.src) && (el.currentSrc || el.src).length < 200 ? ` ![${esc(alt)}](${el.currentSrc || el.src}) ` : ` [imagem: ${esc(alt)}] `;
+            return;
+        }
+        if (tag === 'canvas' || tag === 'video' || tag === 'audio') {
+            const name = { canvas: 'canvas', video: 'vídeo', audio: 'áudio' }[tag];
+            const label = clean(attr(el, 'aria-label') || el.title || '');
+            buf += ` _[${name}${label ? `: ${esc(label)}` : ' sem texto acessível'}]_ `;
+            return;
+        }
+
+        const level = /^h[1-6]$/.test(tag) ? +tag[1] : role === 'heading' ? +(attr(el, 'aria-level') || 2) : 0;
+        if (level) { flush(); walkChildren(el, style); flush('#'.repeat(Math.min(level, 6)) + ' '); return; }
+
+        if (tag === 'li' || role === 'listitem') {
+            const parent = el.parentElement;
+            let marker = '- ';
+            if (parent?.localName === 'ol') {
+                const step = parent.reversed ? -1 : 1;
+                const first = attr(parent, 'start') != null ? +attr(parent, 'start') : parent.reversed ? parent.querySelectorAll(':scope > li').length : 1;
+                const n = attr(el, 'value') != null ? +attr(el, 'value') : counters.has(parent) ? counters.get(parent) + step : first;
+                counters.set(parent, n);
+                marker = `${n}. `;
+            }
+            flush();
+            const saved = indent;
+            pending = cell ? '' : saved + marker;
+            indent = cell ? saved : saved + ' '.repeat(marker.length);
+            buf = states(el).trim() ? states(el).trim() + ' ' : '';
+            walkChildren(el, style);
+            flush();
+            pending = null;
+            indent = saved;
+            return;
+        }
+        if (tag === 'details' && !el.open) {
+            // Fechado: só o summary aparece; texto solto do corpo não tem caixa própria para checar.
+            const summary = el.querySelector(':scope > summary');
+            if (summary) walk(summary);
+            return;
+        }
+        if (tag === 'summary') {
+            const open = el.parentElement?.localName === 'details' && el.parentElement.open;
+            flush();
+            buf = open ? '▾ ' : '▸ ';
+            walkChildren(el, style);
+            buf += open ? ' _(aberto)_' : ' _(fechado)_';
+            flush();
+            return;
+        }
+        if (tag === 'hr') { flush(); push('---'); return; }
+
+        const isDialog = tag === 'dialog' || role === 'dialog' || role === 'alertdialog' || attr(el, 'aria-modal') === 'true';
+        if (isDialog) {
+            const title = clean(attr(el, 'aria-label') || (attr(el, 'aria-labelledby') ? labelOf(el) : '') || el.querySelector('h1, h2, h3, h4, [role="heading"]')?.textContent) || 'Diálogo';
+            dialogs.push(title);
+            flush(); push(`**[Diálogo aberto: ${esc(title)}]**`);
+            walkChildren(el, style);
+            flush(); push(`**[Fim do diálogo: ${esc(title)}]**`);
+            return;
+        }
+        // Toast/aviso: região viva pequena, com caixa real (anunciador só para leitor de tela fica de fora).
+        const live = (role === 'status' || (attr(el, 'aria-live') || 'off') !== 'off') && !cell && pending === null && !indent && !quote && (() => {
+            const text = clean(el.textContent);
+            const r = el.getBoundingClientRect();
+            return text && text.length < 300 && r.width > 1 && r.height > 1;
+        })();
+        if (tag === 'blockquote' || role === 'alert' || live) {
+            const callout = role === 'alert' ? '[!WARNING]' : live ? '[!NOTE]' : '';
+            flush();
+            const saved = quote;
+            quote += '> ';
+            const mark = out.length;
+            if (callout) push(callout);
+            walkChildren(el, style);
+            flush();
+            if (callout && out.length === mark + 1) out.pop();
+            quote = saved;
+            return;
+        }
+
+        const href = tag === 'a' ? (attr(el, 'href') || '') : '';
+        if (tag === 'a' && !(href && !/^(#(?![!/])|javascript:|data:)/i.test(href)) && states(el)) {
+            const st = states(el);
+            return wrap(el, style, inner => (inner || '') + st);
+        }
+        if (href && !/^(#(?![!/])|javascript:|data:)/i.test(href)) {
+            const url = typeof el.href === 'string' ? el.href : href;
+            const st = states(el) + truncated(el);
+            return wrap(el, style, inner => inner
+                ? `[${inner}](${url})${st}`
+                : inner === '' ? (attr(el, 'aria-label') || el.title ? `[${esc(attr(el, 'aria-label') || el.title)}](${url})${st}` : '')
+                : ` _(link: ${url})_${st}`);
+        }
+        if (tag === 'button' || role === 'button' || role === 'tab') {
+            const kind = role === 'tab' ? 'aba' : 'botão';
+            const st = states(el);
+            const fallback = clean(attr(el, 'aria-label') || el.title || '');
+            buf += ' ';
+            wrap(el, style, inner => inner ? `[${kind}: ${inner}]${st}` : inner === '' ? (fallback ? `[${kind}: ${esc(fallback)}]${st}` : '') : ` _(${kind})_${st}`);
+            buf += ' ';
+            return;
+        }
+        const mark = { strong: '**', b: '**', em: '_', i: '_', s: '~~', del: '~~' }[tag];
+        if (mark && /^inline/.test(style.display)) return wrap(el, style, inner => inner ? mark + inner + mark : '');
+        if (tag === 'legend') { flush(); walkChildren(el, style); buf = buf.trim() ? `**${buf.trim()}**` : ''; flush(); return; }
+
+        const d = style.display;
+        const flow = d !== 'contents' && !d.startsWith('inline');
+        const block = flow && !INLINE.has(tag);
+        if (block) flush(); else if (flow) buf += ' ';
+        // Região da página (como no snapshot ARIA do Playwright), delimitada para a LLM.
+        const region = !cell && pending === null && !indent && !quote && landmark(el, tag, role);
+        if (region) flush();
+        const regionStart = out.length;
+        if (region) push(`_[${region}]_`);
+        const st = states(el);
+        if (st && (role || attr(el, 'aria-expanded'))) buf += st.trim() + ' ';
+        walkChildren(el, style);
+        const full = truncated(el);
+        if (full) tail(full);
+        if (region) {
+            flush();
+            if (out.length === regionStart + 1) out.pop(); // região vazia: sem marcadores
+            else push(`_[fim: ${region.split(':')[0]}]_`);
+        }
+        if (block) flush(); else if (flow) buf += ' ';
+    }
+
+    function landmark(el, tag, role) {
+        const name = clean(attr(el, 'aria-label') || (attr(el, 'aria-labelledby') ? labelOf(el) : ''));
+        const kind = (tag === 'nav' || role === 'navigation') ? 'navegação'
+            : (tag === 'aside' || role === 'complementary') ? 'lateral'
+            : (tag === 'main' || role === 'main') ? 'conteúdo principal'
+            : role === 'search' || tag === 'search' ? 'busca'
+            : name && (role === 'region' || (tag === 'section' && attr(el, 'aria-label'))) ? 'região'
+            : name && (role === 'form' || tag === 'form') ? 'formulário' : '';
+        return kind && (name ? `${kind}: ${esc(name)}` : kind);
+    }
+
+    // Texto cortado por JS ("Nome muito lo…") com o texto inteiro no title/tooltip.
+    function truncated(el) {
+        const full = attr(el, 'title') || attr(el, 'data-original-title') || attr(el, 'uib-tooltip');
+        // Só o elemento mais interno anota; o contêiner com o mesmo title não repete.
+        if (!full || el.querySelector('[title], [data-original-title], [uib-tooltip]')) return '';
+        const visible = clean(el.textContent);
+        const stem = visible.replace(/(…|\.\.\.)$/, '').trim();
+        return stem && stem !== visible && full.length > visible.length && clean(full).startsWith(stem) ? ` _(completo: ${esc(clean(full))})_` : '';
+    }
+
+    const isTop = window === window.top;
+    walk(document.body || document.documentElement);
+    flush();
+    const body = out.reduce((acc, o, i) => acc + (i ? (o.tight && out[i - 1].tight ? '\n' : '\n\n') : '') + o.text, '');
+
+    const frames = allFrames(document);
+    const frameLists = {
+        shownFrameUrls: [...new Set(frames.filter(f => reachedFrames.has(f)).map(elementKey).filter(Boolean))],
+        hiddenFrameUrls: [...new Set(frames.filter(f => !reachedFrames.has(f)).map(elementKey).filter(Boolean))]
+    };
+    const title = clean(document.title) || clean(document.querySelector('h1')?.textContent) || 'Página sem título';
+    if (!isTop) return { title, url: location.href, markdown: body, ...frameLists };
+
+    const now = new Date().toLocaleString('pt-BR');
+    let header = `---\ntitle: "${title.replace(/["\\]/g, '\\$&')}"\nsource: "${location.href}"\ndate: "${now}"\ntags:\n  - snapmd\n---\n\n`;
+    header += `> **Fonte:** [${esc(title)}](${location.href})\n> **Capturado em:** ${now}\n`;
+    if (focused && focused !== document.body && focused !== document.documentElement) {
+        const name = /^(input|select|textarea)$/.test(focused.localName) || attr(focused, 'role') ? labelOf(focused) : clean(focused.textContent).slice(0, 80);
+        header += `> **Foco atual:** ${esc(name || focused.localName)}\n`;
+    }
+    dialogs.forEach(d => { header += `> **Diálogo aberto:** ${esc(d)}\n`; });
+    const selected = clean(getSelection()?.toString());
+    if (selected) header += `\n**Texto selecionado na página:**\n\n> ${esc(selected)}\n`;
+    return { title, url: location.href, markdown: `${header}\n${body}\n`, ...frameLists };
 })();

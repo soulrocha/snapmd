@@ -17,6 +17,27 @@
     const CELL = 'td, th, [role="cell"], [role="gridcell"], [role="columnheader"], [role="rowheader"]';
     const STRUCTURE = 'a[href], button, input, select, textarea, table, h1, h2, h3, h4, h5, h6, ul, ol, li, img, p, b, strong, em, blockquote';
     const SECRET = /(^|\s)(cc-|one-time-code|current-password|new-password)/;
+    const SECRET_NAME = /(^|[^a-z])(cvv|cvc|csc|otp|pin|senha|password|passwd|secret)([^a-z]|$)/i;
+    // "txtSenha" e "userPassword" viram "txt Senha" e "user Password" antes do teste.
+    const isSecretName = text => SECRET_NAME.test(String(text).replace(/([a-z])([A-Z])/g, '$1 $2'));
+    // Cartão: prefixo e tamanho de bandeira + Luhn. Sem a bandeira, IMEI (15 dígitos, Luhn) seria ocultado.
+    function isCardNumber(value) {
+        const digits = String(value).replace(/[\s.-]/g, '');
+        const n = digits.length;
+        const brand = /^4/.test(digits) ? [13, 16, 19].includes(n)
+            : /^(5[1-5]|2[2-7])/.test(digits) ? n === 16
+            : /^3[47]/.test(digits) ? n === 15
+            : /^3[068]/.test(digits) ? n === 14
+            : /^(6|35)/.test(digits) ? n >= 16 && n <= 19 : false;
+        if (!/^\d+$/.test(digits) || !brand) return false;
+        let sum = 0;
+        for (let i = 0; i < digits.length; i++) {
+            let d = +digits[digits.length - 1 - i];
+            if (i % 2) { d *= 2; if (d > 9) d -= 9; }
+            sum += d;
+        }
+        return sum % 10 === 0;
+    }
 
     let out = [];          // blocos prontos: { text, tight }
     let buf = '';          // texto inline do bloco corrente
@@ -27,7 +48,19 @@
     let resets = 0;        // quantas vezes buf foi esvaziado (wrap usa para achar seu início)
     const counters = new WeakMap(); // numeração corrente de cada <ol>
     const dialogs = [];
-    const shownFrameIds = []; // frameId de cada iframe renderizado; o popup só anexa esses
+    // Iframes que a caminhada alcançou (renderizados). O popup descarta o frame filho cuja URL
+    // só aparece entre os ocultos. Chrome e Edge não têm runtime.getFrameId; a chave é a URL sem hash.
+    const reachedFrames = new WeakSet();
+    const frameKey = url => {
+        if (url === 'about:srcdoc') return url;
+        try {
+            const u = new URL(url);
+            if (!/^https?:$/.test(u.protocol)) return '';
+            u.hash = '';
+            return u.href;
+        } catch (_) { return ''; }
+    };
+    const elementKey = el => el.hasAttribute('srcdoc') ? 'about:srcdoc' : frameKey(el.src);
     const emitted = new WeakSet(); // checkbox/radio já emitido (pelo rótulo ou pelo próprio input)
 
     let focused = document.activeElement;
@@ -128,7 +161,9 @@
         if (emitted.has(el)) return;
         emitted.add(el);
         const native = el.localName === 'input';
+        const inner = !native && !['aria-checked', 'aria-pressed', 'aria-selected'].some(a => el.hasAttribute(a)) && el.querySelector('input[type="checkbox"], input[type="radio"]');
         const mark = native ? (el.indeterminate ? '-' : el.checked ? 'x' : ' ')
+            : inner ? (inner.checked ? 'x' : ' ')
             : attr(el, 'aria-checked') === 'mixed' ? '-' : (attr(el, 'aria-checked') === 'true' || attr(el, 'aria-pressed') === 'true' || attr(el, 'aria-selected') === 'true') ? 'x' : ' ';
         const kind = attr(el, 'role') === 'switch' ? ' _(switch)_' : '';
         flush();
@@ -155,7 +190,8 @@
             }
             value = esc(selected.join(', ')) || '_Não preenchido_';
             if (options.length) notes.push(options.length <= 30 ? `opções: ${options.map(esc).join(' / ')}` : `${options.length} opções`);
-        } else if (type === 'password' || SECRET.test(attr(el, 'autocomplete') || '')) {
+        } else if (type === 'password' || SECRET.test(attr(el, 'autocomplete') || '')
+            || isSecretName([el.name, el.id, labelOf(el)].join(' ')) || isCardNumber(el.value || '')) {
             value = el.value ? '_(oculto)_' : '_Não preenchido_';
         } else if (type === 'file') {
             value = Array.from(el.files || [], f => esc(f.name)).join(', ') || '_Nenhum arquivo_';
@@ -246,11 +282,17 @@
             entry.cells.push(...cells);
             merged.set(key, entry);
         });
+        // Só colunas que têm alguma célula, em ordem: aria-colindex alto ou colunas virtualizadas não alargam a tabela.
+        const indexes = [...new Set(Array.from(merged.values()).flatMap(e => e.cells.map(c => +attr(c, 'aria-colindex')).filter(n => n > 0)))].sort((a, b) => a - b);
+        const position = new Map(indexes.map((col, i) => [col, i]));
         const grid = Array.from(merged.values()).map(({ row, cells }) => {
             if (cells.some(c => attr(c, 'aria-colindex'))) cells.sort((a, b) => attr(a, 'aria-colindex') - attr(b, 'aria-colindex'));
             const header = cells.length > 0 && (row.closest('thead') || cells.every(c => c.localName === 'th' || attr(c, 'role') === 'columnheader'));
             const values = [];
             cells.forEach((c, i) => {
+                // Grid esparso: coluna ausente vira célula vazia, sem deslocar as seguintes.
+                const col = +attr(c, 'aria-colindex');
+                while (col > 0 && values.length < position.get(col)) values.push(' ');
                 let text = capture(() => walkChildren(c, styleOf(c))).replace(/\n+/g, ' <br> ').replace(/(?<!\\)\|/g, '\\|');
                 if (i === 0) text = (states(row).trim() + ' ' + text).trim();
                 const sort = attr(c, 'aria-sort');
@@ -280,10 +322,7 @@
     }
 
     function frame(el) {
-        try {
-            const id = globalThis.chrome?.runtime?.getFrameId?.(el);
-            if (id >= 0) shownFrameIds.push(id);
-        } catch (_) {}
+        reachedFrames.add(el);
         let doc = null;
         try { doc = el.contentDocument; } catch (_) {}
         const src = el.src || attr(el, 'src') || 'about:blank';
@@ -309,11 +348,27 @@
         } else tail(format(null));
     }
 
-    function children(el) {
-        if (el.localName === 'slot') return el.assignedNodes({ flatten: true });
+    function shadowOf(el) {
         let root = el.shadowRoot;
         if (!root) try { root = globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el); } catch (_) {}
+        return root || null;
+    }
+    function children(el) {
+        if (el.localName === 'slot') return el.assignedNodes({ flatten: true });
+        const root = shadowOf(el);
         return root ? root.childNodes : el.childNodes;
+    }
+    // Todos os iframes, inclusive em shadow DOM e em iframes de mesma origem que a caminhada pulou.
+    function allFrames(root, found = []) {
+        for (const el of root.querySelectorAll('*')) {
+            if (el.localName === 'iframe' || el.localName === 'frame') {
+                found.push(el);
+                try { if (el.contentDocument) allFrames(el.contentDocument, found); } catch (_) {}
+            }
+            const shadow = shadowOf(el);
+            if (shadow) allFrames(shadow, found);
+        }
+        return found;
     }
     function walkChildren(el, style) {
         const showText = style.visibility === 'visible';
@@ -348,7 +403,12 @@
         if (tag === 'label' && el.control) {
             const target = el.control;
             // O controle sai com o texto deste rótulo; o rótulo não se repete no fluxo.
-            if (el.contains(target) && (rendered(target) || /^(checkbox|radio)$/.test(target.type))) return walk(target);
+            if (el.contains(target) && (rendered(target) || /^(checkbox|radio)$/.test(target.type))) {
+                walk(target);
+                const links = Array.from(el.querySelectorAll('a[href]')).filter(a => !/^(#(?![!/])|javascript:|data:)/i.test(attr(a, 'href')));
+                if (links.length) tail(' ' + links.map(a => `[${esc(clean(a.textContent)) || 'link'}](${a.href})`).join(' '));
+                return;
+            }
             if (emitted.has(target)) return;
             if (/^(checkbox|radio)$/.test(target.type)) return choice(target);
             if (rendered(target)) return;
@@ -523,8 +583,13 @@
     flush();
     const body = out.reduce((acc, o, i) => acc + (i ? (o.tight && out[i - 1].tight ? '\n' : '\n\n') : '') + o.text, '');
 
+    const frames = allFrames(document);
+    const frameLists = {
+        shownFrameUrls: [...new Set(frames.filter(f => reachedFrames.has(f)).map(elementKey).filter(Boolean))],
+        hiddenFrameUrls: [...new Set(frames.filter(f => !reachedFrames.has(f)).map(elementKey).filter(Boolean))]
+    };
     const title = clean(document.title) || clean(document.querySelector('h1')?.textContent) || 'Página sem título';
-    if (!isTop) return { title, url: location.href, markdown: body, shownFrameIds };
+    if (!isTop) return { title, url: location.href, markdown: body, ...frameLists };
 
     const now = new Date().toLocaleString('pt-BR');
     let header = `---\ntitle: "${title.replace(/["\\]/g, '\\$&')}"\nsource: "${location.href}"\ndate: "${now}"\ntags:\n  - snapmd\n---\n\n`;
@@ -536,5 +601,5 @@
     dialogs.forEach(d => { header += `> **Diálogo aberto:** ${esc(d)}\n`; });
     const selected = clean(getSelection()?.toString());
     if (selected) header += `\n**Texto selecionado na página:**\n\n> ${esc(selected)}\n`;
-    return { title, url: location.href, markdown: `${header}\n${body}\n`, shownFrameIds };
+    return { title, url: location.href, markdown: `${header}\n${body}\n`, ...frameLists };
 })();

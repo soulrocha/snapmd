@@ -42,7 +42,7 @@ A captura percorre a página inteira em ordem de leitura, inclusive abaixo da á
 
 Para ler iframes de outra origem, como os de portais Microsoft, a extensão pede acesso a todos os sites (`<all_urls>`). Ela só lê a página quando você clica no ícone.
 
-Limites: linhas de grid ou log virtualizado que a página ainda não carregou não estão no DOM e não aparecem (a captura informa "N de M linhas renderizadas" quando o grid declara o total). Do terminal sai só o que está na tela; o histórico rolado não fica no DOM. Terminal desenhado em canvas, imagens sem texto alternativo e PDFs não fornecem texto. Páginas internas do navegador são restritas. O botão **Tentar novamente** repete a captura sem recarregar a página e sem perder os dados do formulário.
+Limites: linhas de grid ou log virtualizado que a página ainda não carregou não estão no DOM e não aparecem (a captura informa "N de M linhas renderizadas" quando o grid declara o total). Do terminal sai só o que está na tela; o histórico rolado não fica no DOM. Terminal desenhado em canvas, imagens sem texto alternativo e PDFs não fornecem texto. Iframes de outra origem ocultos na página são descartados pela URL; um iframe visível dentro de outro iframe oculto, ou um iframe oculto que mudou de endereço, ainda pode aparecer. Páginas internas do navegador são restritas. O botão **Tentar novamente** repete a captura sem recarregar a página e sem perder os dados do formulário.
 
 ## Desenvolvimento e publicação
 

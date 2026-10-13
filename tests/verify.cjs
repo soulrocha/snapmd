@@ -137,17 +137,17 @@ const playwright = require("playwright");
  hasQ('2. Terceiro\n1. Segundo'); hasQ('7. Sete\n8. Oito');
  hasQ('\\# não é título'); hasQ('1\\. não é lista'); hasQ('``` a``b ```');
  hasQ('| `x ↵ y` |');
- // getFrameId simulado: data-fid faz o papel do frameId do navegador.
- await qa.setContent(`<div style="visibility:hidden"><iframe data-fid="1" src="about:blank"></iframe></div>
-  <div style="height:0;overflow:hidden"><iframe data-fid="2" src="about:blank"></iframe></div>
-  <iframe data-fid="3" src="about:blank"></iframe><div style="display:none"><iframe data-fid="4" src="about:blank"></iframe></div>
-  <x-host></x-host><iframe id="outer" data-fid="6" style="width:300px;height:100px" srcdoc="<div style='visibility:hidden'><iframe data-fid='7'></iframe></div><iframe data-fid='8'></iframe>"></iframe>
-  <table><tr></tr></table>
-  <script>window.chrome={runtime:{getFrameId:el=>el.dataset&&el.dataset.fid?+el.dataset.fid:-1}};
-  document.querySelector('x-host').attachShadow({mode:'open'}).innerHTML='<div style="visibility:hidden"><iframe data-fid="5"></iframe></div>';</script>`);
- await qa.waitForFunction(()=>document.querySelector('#outer').contentDocument?.querySelector('[data-fid="8"]'));
+ // Filtro de frames por URL (Chrome/Edge não têm runtime.getFrameId).
+ await qa.setContent(`<div style="visibility:hidden"><iframe src="https://child.test/a#x"></iframe></div>
+  <div style="height:0;overflow:hidden"><iframe src="https://child.test/b"></iframe></div>
+  <iframe src="https://child.test/vis"></iframe><div style="visibility:hidden"><iframe src="https://child.test/vis"></iframe></div>
+  <x-host></x-host><iframe id="outer" style="width:300px;height:100px" srcdoc="<div style='visibility:hidden'><iframe src='https://child.test/nested'></iframe></div><iframe src='https://child.test/inner'></iframe>"></iframe>
+  <iframe src="about:blank"></iframe><table><tr></tr></table>
+  <script>document.querySelector('x-host').attachShadow({mode:'open'}).innerHTML='<div style="visibility:hidden"><iframe src="https://child.test/shadow"></iframe></div>';</script>`);
+ await qa.waitForFunction(()=>document.querySelector('#outer').contentDocument?.querySelectorAll('iframe').length===2);
  const hq = await qa.evaluate(source);
- assert.deepEqual(hq.shownFrameIds.sort(),[3,6,8],'only rendered frames (same URL, shadow, nested): '+hq.shownFrameIds);
+ assert.deepEqual(hq.shownFrameUrls.sort(),['about:srcdoc','https://child.test/inner','https://child.test/vis'],'shown: '+hq.shownFrameUrls);
+ assert.deepEqual(hq.hiddenFrameUrls.sort(),['https://child.test/a','https://child.test/b','https://child.test/nested','https://child.test/shadow','https://child.test/vis'],'hidden: '+hq.hiddenFrameUrls);
  assert.ok(!hq.markdown.includes('Coluna 1'),'empty table skipped');
 
  // Ajustes vindos da pesquisa (Playwright aria snapshot, browser-use, log do Portainer).
@@ -186,13 +186,37 @@ const playwright = require("playwright");
  assert.ok(m.indexOf('Antes2') < m.indexOf('_[navegação]_'),'text before contents landmark stays outside');
  assert.ok(!m.includes('navegação: Vazia'),'empty landmark omitted');
  hasM('mensagem: Use o email corporativo');
+
+ // Revisão do PR (Devin).
+ await qa.setContent(`<div role="switch" aria-label="Alertas"><input type="checkbox" checked></div>
+ <label><input type="checkbox"> Aceito os <a href="/termos">termos</a></label>
+ <div role="grid"><div role="row"><div role="columnheader" aria-colindex="1">Nome</div><div role="columnheader" aria-colindex="2">Email</div><div role="columnheader" aria-colindex="3">Papel</div></div>
+ <div role="row"><div role="gridcell" aria-colindex="1">Ana</div><div role="gridcell" aria-colindex="3">Admin</div></div></div>
+ <label>Número<input value="4111 1111 1111 1111"></label><label>CVV<input value="123"></label><label>Código OTP<input name="otp_code" value="654321"></label>
+ <label>Pedido<input value="1234567890123"></label><label>Pinned<input value="sim"></label>`);
+ const dv = (await qa.evaluate(source)).markdown;
+ const hasD = (text,label=text)=>assert.ok(dv.includes(text),label+'\n---\n'+dv);
+ hasD('[x] Alertas _(switch)_','switch wrapper reads nested checkbox');
+ hasD('[ ] Aceito os termos [termos](https://qa.test/termos)','link inside label keeps URL');
+ hasD('| Ana |   | Admin |','sparse grid keeps columns');
+ for(const secret of ['4111','123 ','654321']) assert.ok(!dv.includes(secret),secret+'\n'+dv);
+ hasD('**Número:** _(oculto)_'); hasD('**CVV:** _(oculto)_'); hasD('**Código OTP:** _(oculto)_');
+ hasD('**Pedido:** 1234567890123','non-Luhn number kept'); hasD('**Pinned:** sim','word containing pin kept');
+ await qa.setContent(`<div role="grid"><div role="row"><div role="gridcell" aria-colindex="1">A</div><div role="gridcell" aria-colindex="999999">Z</div></div></div>
+ <label>IMEI<input value="490154203237518"></label><input id="txtSenha" value="VAZOU1"><input name="userPassword" value="VAZOU2">
+ <label>Cartão pontuado<input value="4111.1111.1111.1111"></label><label>CNPJ<input value="11222333000181"></label>`);
+ const dv2 = (await qa.evaluate(source)).markdown;
+ assert.ok(dv2.length < 5000 && dv2.includes('| A | Z |'),'huge aria-colindex compacted\n'+dv2.slice(0,500));
+ assert.ok(dv2.includes('**IMEI:** 490154203237518'),'IMEI kept\n'+dv2);
+ for(const secret of ['VAZOU1','VAZOU2','4111']) assert.ok(!dv2.includes(secret),secret+'\n'+dv2);
+ assert.ok(dv2.includes('**CNPJ:** 11222333000181'),'CNPJ kept');
  await qa.close();
  const popupURL='file:///'+path.resolve('popup.html').replace(/\\/g,'/');
  async function open(mode='success',reduced=false){
   const p=await browser.newPage({viewport:{width:400,height:560},reducedMotion:reduced?'reduce':'no-preference'});
   await p.addInitScript(({data,mode})=>{
    window.__attempts=0;window.__reloads=0;window.__copied='';
-   window.chrome={tabs:{query:async()=>mode==='absent'?[]:[{id:1,url:mode==='restricted'?'chrome://settings':'https://'+ 'a'.repeat(160)+'.test',title:'Título '.repeat(60)}],reload:()=>window.__reloads++},scripting:{executeScript:async(opts)=>{window.__attempts++;if(mode==='allframes-fail'&&opts.target.allFrames)throw Error('frame denied');if(mode==='frames')return [{frameId:0,result:{...data,shownFrameIds:[7]}},{frameId:9,result:{url:'https://login.microsoftonline.test/',markdown:'FRAMEOCULTO',shownFrameIds:[10]}},{frameId:10,result:{url:'https://neto.test/',markdown:'NETOOCULTO'}},{frameId:7,result:{title:'f',url:'https://login.microsoftonline.test/',markdown:'Conteúdo do frame'}},{frameId:8,result:null}];if(mode==='pending')return await new Promise(resolve=>window.__resolve=()=>resolve([{result:data}]));if(mode==='error'||(mode==='retry'&&window.__attempts<=2))throw Error('Synthetic failure');return [{result:mode==='empty'?{markdown:''}:data}];}}};
+   window.chrome={tabs:{query:async()=>mode==='absent'?[]:[{id:1,url:mode==='restricted'?'chrome://settings':'https://'+ 'a'.repeat(160)+'.test',title:'Título '.repeat(60)}],reload:()=>window.__reloads++},scripting:{executeScript:async(opts)=>{window.__attempts++;if(mode==='allframes-fail'&&opts.target.allFrames)throw Error('frame denied');if(mode==='frames')return [{frameId:0,result:{...data,shownFrameUrls:['https://login.microsoftonline.test/'],hiddenFrameUrls:['https://hidden.test/']}},{frameId:9,result:{url:'https://hidden.test/#/rota',markdown:'FRAMEOCULTO'}},{frameId:7,result:{title:'f',url:'https://login.microsoftonline.test/',markdown:'Conteúdo do frame'}},{frameId:8,result:null}];if(mode==='pending')return await new Promise(resolve=>window.__resolve=()=>resolve([{result:data}]));if(mode==='error'||(mode==='retry'&&window.__attempts<=2))throw Error('Synthetic failure');return [{result:mode==='empty'?{markdown:''}:data}];}}};
    Object.defineProperty(navigator,'clipboard',{value:{writeText:async t=>{if(window.__clipboardFail)throw Error('denied');if(window.__clipboardPending)await new Promise(resolve=>window.__clipboardResolve=resolve);window.__copied=t;}}});
   },{data:result,mode});
   await p.goto(popupURL);return p;

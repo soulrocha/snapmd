@@ -14,17 +14,25 @@ Atalhos: `Ctrl+Enter` para copiar, `Ctrl+S` para baixar e `Esc` para fechar. O L
 
 Toda a extração ocorre no navegador. O SnapMD não envia dados a servidores e não preenche nem envia formulários. Confira o conteúdo antes de compartilhá-lo.
 
-## Instalar a release
+## Instalar
 
-Após a publicação da versão `v1.4.0`, execute no PowerShell com o [GitHub CLI](https://cli.github.com/) instalado:
+Com o [Git](https://git-scm.com/) instalado, clone o repositório na pasta de aplicativos do usuário (PowerShell):
 
 ```powershell
-New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\SnapMD\downloads"
-gh release download v1.4.0 --repo soulrocha/snapmd --pattern snapmd-1.4.0.zip --dir "$env:LOCALAPPDATA\SnapMD\downloads"
-Expand-Archive -LiteralPath "$env:LOCALAPPDATA\SnapMD\downloads\snapmd-1.4.0.zip" -DestinationPath "$env:LOCALAPPDATA\SnapMD\1.4.0"
+git clone https://github.com/soulrocha/snapmd.git "$env:LOCALAPPDATA\SnapMD"
 ```
 
-Abra `chrome://extensions` ou `edge://extensions`, ative **Modo do desenvolvedor**, escolha **Carregar sem compactação** e selecione a pasta `SnapMD\1.4.0` criada em seu diretório local de aplicativos. Não há instalação automática no navegador. Para atualizar uma instalação de desenvolvimento, use **Recarregar** na página de extensões.
+Abra `edge://extensions` ou `chrome://extensions`, ative **Modo do desenvolvedor**, escolha **Carregar sem compactação** e selecione a pasta `%LOCALAPPDATA%\SnapMD`. A pasta fica sempre na versão atual: não há uma pasta por versão.
+
+## Atualizar
+
+```powershell
+git -C "$env:LOCALAPPDATA\SnapMD" pull
+```
+
+Depois clique em **Recarregar** no card do SnapMD em `edge://extensions`.
+
+Prefere um pacote sem Git? Cada release no GitHub traz um `snapmd-<versão>.zip` com os mesmos arquivos; extraia-o na mesma pasta.
 
 ## Limites da captura
 

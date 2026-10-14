@@ -30,7 +30,7 @@ jobs:
           SNAPMD_SCREENSHOT: ${{ runner.temp }}/popup-preview.png
       - name: Package
         run: npm run package -- -OutputDirectory "${{ runner.temp }}/dist"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: snapmd-zip
           path: ${{ runner.temp }}/dist/*.zip

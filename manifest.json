@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SnapMD — Markdown da página",
   "short_name": "SnapMD",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Capture structured Markdown from modern SPAs, dashboards, portals, active modals, and dynamic web apps with SVG connectors and form states.",
   "icons": {
     "16": "icons/icon-16.png",

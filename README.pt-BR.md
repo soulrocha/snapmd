@@ -90,7 +90,9 @@ Depois clique em **Recarregar** no card do SnapMD em `edge://extensions`.
 
 **Tentar novamente** repete a captura sem recarregar a página e sem perder os dados do formulário. O Ladino reúne folhas durante a extração e só comemora quando a cópia é confirmada. A preferência do sistema por movimento reduzido é respeitada.
 
-<img src="assets/popup-preview.png" alt="Popup do SnapMD com a prévia em Markdown de um formulário, os botões de copiar e baixar e o mascote Ladino" width="320">
+<img src="assets/demo.gif" alt="Demonstração: clique no ícone do SnapMD num portal administrativo, o popup captura a página, a prévia rola até as caixas marcadas e o Markdown é copiado" width="100%">
+
+<sub>Demonstração de 16 segundos com o popup real. Também em [MP4](assets/demo.mp4).</sub>
 
 ## O que captura
 
@@ -151,6 +153,7 @@ npm install
 npm run check      # node --check em todos os scripts
 npm test           # suíte ponta a ponta com Playwright (tests/verify.cjs)
 npm run hero       # gera de novo assets/hero.png e assets/social-preview.png a partir do popup real
+npm run demo       # grava assets/demo.mp4 e assets/demo.gif (precisa do ffmpeg)
 npm run package    # gera dist/snapmd-<versão>.zip
 ```
 

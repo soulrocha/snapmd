@@ -90,7 +90,9 @@ Then click **Reload** on the SnapMD card in `edge://extensions`.
 
 **Tentar novamente** (Try again) repeats the capture without reloading the page, so form data is not lost.
 
-<img src="assets/popup-preview.png" alt="SnapMD popup showing the Markdown preview of a form, with Copy and Download buttons and the Rogue mascot" width="320">
+<img src="assets/demo.gif" alt="Demo: clicking the SnapMD icon on an admin portal, the popup captures the page, the preview scrolls to the checked boxes and the Markdown is copied" width="100%">
+
+<sub>16-second demo with the real popup. Also available as [MP4](assets/demo.mp4).</sub>
 
 > [!NOTE]
 > The popup and the annotations SnapMD adds to the Markdown (such as `[botão: …]` or `_(oculto)_`) are in Brazilian Portuguese for now. English localization is on the [roadmap](#roadmap). Page content is always copied in its original language.
@@ -154,6 +156,7 @@ npm install
 npm run check      # node --check on every script
 npm test           # Playwright end-to-end suite (tests/verify.cjs)
 npm run hero       # re-render assets/hero.png and assets/social-preview.png from the real popup
+npm run demo       # record assets/demo.mp4 and assets/demo.gif (needs ffmpeg)
 npm run package    # build dist/snapmd-<version>.zip
 ```
 

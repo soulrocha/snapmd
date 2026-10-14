@@ -245,6 +245,11 @@ const playwright = require("playwright");
  const cs = await qa.evaluate(source);
  const cr = (await qa.evaluate(reader+';snapmdReadPage('+JSON.stringify(cs.slots)+')'))[cs.slots[0].token];
  assert.ok(cr.includes('| Lat | 5 ms | c | 1 ms | 9 ms | 5 ms |') && cr.includes('| b | 9 ms |'),'numeric strings and per-point index\n'+cr);
+ // Pontos { x, y } e média diferente do último valor: prova a cópia dos dados e o índice de mínimo e máximo.
+ await qa.setContent('<canvas id="c"></canvas><script>window.Chart={instances:{1:{canvas:document.getElementById("c"),data:{labels:["a","b","c"],datasets:[{label:"Lat",data:[{x:"a",y:1},{x:"b",y:9},{x:"c",y:2}]}]},options:{tooltips:{callbacks:{label:(t,d)=>d.datasets[t.datasetIndex].label+": "+d.datasets[t.datasetIndex].data[t.index].y+" ms"}}}}}};</script>');
+ const ps = await qa.evaluate(source);
+ const pr = (await qa.evaluate(reader+';snapmdReadPage('+JSON.stringify(ps.slots)+')'))[ps.slots[0].token];
+ assert.ok(pr.includes('| Lat | 2 ms | c | 1 ms | 9 ms | 4 ms |') && pr.includes('| a | 1 ms |'),'object points keep their shape\n'+pr);
  // Valor de várias linhas dentro de lista, citação e link (sem o prefixo da linha, o Markdown quebrava).
  await qa.setContent('<ul><li>Uso <canvas></canvas></li><li>outro</li></ul><p>x <canvas></canvas></p><ul><li><p>Bloco</p><canvas></canvas></li><li>fim</li></ul><blockquote><p>Citação</p><canvas></canvas><p>continua</p></blockquote><p><a href="https://x.test/">ver <canvas></canvas></a></p>');
  const sl = await qa.evaluate(source);

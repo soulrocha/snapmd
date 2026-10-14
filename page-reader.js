@@ -123,10 +123,12 @@ function snapmdReadPage(slots) {
         const fmt = (d, i, v) => {
             let s;
             try {
-                const ds = { ...datasets[d], data: Object.assign([...datasets[d].data], { [i]: v }) };
+                const p = datasets[d].data[i];
+                const point = p !== null && typeof p === 'object' ? { ...p, y: v } : v; // mantém o formato { x, y }
+                const ds = { ...datasets[d], data: Object.assign([...datasets[d].data], { [i]: point }) };
                 const data = { ...c.data, datasets: datasets.map((x, k) => k === d ? ds : x) };
                 s = typeof v2 === 'function' ? v2({ datasetIndex: d, index: i, xLabel: labels[i], label: labels[i], yLabel: v, value: String(v) }, data)
-                    : typeof v3 === 'function' ? v3.call(c.tooltip, { chart: c, dataset: ds, datasetIndex: d, dataIndex: i, label: labels[i], parsed: { y: v }, raw: v, formattedValue: String(v) })
+                    : typeof v3 === 'function' ? v3.call(c.tooltip, { chart: c, dataset: ds, datasetIndex: d, dataIndex: i, label: labels[i], parsed: { y: v }, raw: ds.data[i], formattedValue: String(v) })
                     : null;
             } catch (_) {}
             if (Array.isArray(s)) s = s.join(' ');
@@ -151,7 +153,7 @@ function snapmdReadPage(slots) {
         if (labels.length) {
             const recent = labels.slice(-5).map((label, k) => {
                 const i = labels.length - Math.min(5, labels.length) + k;
-                return row([label, ...datasets.map((ds, d) => Number.isFinite(num(ds?.data?.[i])) ? fmt(d, i, num(ds.data[i])) : '')]);
+                return row([label, ...datasets.map((ds, d) => Array.isArray(ds?.data) && Number.isFinite(num(ds.data[i])) ? fmt(d, i, num(ds.data[i])) : '')]);
             });
             parts.push('Últimos valores:', table(['Horário', ...datasets.map((ds, d) => ds?.label || `Série ${d + 1}`)], recent));
         }

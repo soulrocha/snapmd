@@ -5,7 +5,7 @@ All notable changes to SnapMD are listed here. The format follows [Keep a Change
 ## [Unreleased]
 
 ### Added
-- English README with a Brazilian Portuguese translation (`README.pt-BR.md`), and a hero image and social preview rendered from the real popup over a sample page (`npm run hero`).
+- English README with a Brazilian Portuguese translation (`README.pt-BR.md`), and a hero image and social preview rendered from the real popup over a sample page (`npm run hero`), plus a 16-second demo video and GIF of the real popup (`npm run demo`).
 
 ### Changed
 - New pixel-art icon with the Rogue holding a Markdown page, also shown next to the name in the popup header.

@@ -11,12 +11,20 @@
     "url": "git+https://github.com/soulrocha/snapmd.git"
   },
   "bugs": "https://github.com/soulrocha/snapmd/issues",
-  "keywords": ["chrome-extension", "edge-extension", "markdown", "llm", "web-to-markdown", "manifest-v3"],
+  "keywords": [
+    "chrome-extension",
+    "edge-extension",
+    "markdown",
+    "llm",
+    "web-to-markdown",
+    "manifest-v3"
+  ],
   "scripts": {
-    "check": "node --check extractor.js && node --check page-reader.js && node --check popup.js && node --check tests/verify.cjs && node --check scripts/render-hero.cjs",
+    "check": "node --check extractor.js && node --check page-reader.js && node --check popup.js && node --check tests/verify.cjs && node --check scripts/render-hero.cjs && node --check scripts/record-demo.cjs",
     "test": "node tests/verify.cjs",
     "hero": "node scripts/render-hero.cjs",
-    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1"
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
+    "demo": "node scripts/record-demo.cjs"
   },
   "devDependencies": {
     "playwright": "^1.64.1"

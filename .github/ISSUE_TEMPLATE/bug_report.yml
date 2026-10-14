@@ -1,0 +1,43 @@
+name: Bug report
+description: Something was captured wrong, or not at all
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Do not paste secrets or personal data.** Please reduce the page to a minimal HTML sample if you can.
+  - type: input
+    id: version
+    attributes:
+      label: SnapMD version
+      description: See `edge://extensions` or `manifest.json`.
+      placeholder: "1.5.0"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: "Edge 131 / Chrome 131"
+    validations:
+      required: true
+  - type: textarea
+    id: page
+    attributes:
+      label: What page or component?
+      description: Product name (e.g. Portainer, Azure portal) or a minimal HTML sample that reproduces it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Markdown
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Markdown
+      render: markdown
+    validations:
+      required: true

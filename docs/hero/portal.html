@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Access request · Contoso Cloud Admin</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 "Segoe UI",system-ui,sans-serif;color:#1f2733;background:#f4f6f9}
+.top{height:48px;display:flex;align-items:center;gap:10px;padding:0 20px;background:#1f3a5f;color:#fff;font-weight:600}
+.top .logo{width:22px;height:22px;border-radius:5px;background:linear-gradient(135deg,#5ab0ff,#2f6fd6)}
+.top .user{margin-left:auto;font-weight:400;opacity:.85;font-size:13px}
+.wrap{display:flex}
+nav{width:190px;min-height:calc(100vh - 48px);background:#fff;border-right:1px solid #e3e7ed;padding:14px 0}
+nav a{display:block;padding:8px 20px;color:#4a5566;text-decoration:none}
+nav a[aria-current]{background:#eaf2fd;color:#1f5fbf;border-left:3px solid #2f6fd6;padding-left:17px;font-weight:600}
+main{padding:22px 28px;width:590px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:#6b7686;margin:0 0 18px}
+.card{background:#fff;border:1px solid #e3e7ed;border-radius:8px;padding:16px 18px;margin-bottom:14px}
+fieldset{border:0;padding:0;margin:0 0 10px}legend{font-weight:600;margin-bottom:6px;padding:0}
+label{margin-right:18px}input[type=radio],input[type=checkbox]{accent-color:#2f6fd6;margin-right:6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}
+.field label{display:block;font-weight:600;margin-bottom:4px}
+.field input{width:100%;padding:7px 9px;border:1px solid #c9d1dc;border-radius:5px;font:inherit}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #eef1f5}th{color:#6b7686;font-weight:600;font-size:12.5px}
+.ok{color:#1d7a46}.bad{color:#b4372c}
+pre{margin:10px 0 0;background:#0f1720;color:#d4dbe6;border-radius:6px;padding:9px 11px;font:12px/1.5 Consolas,monospace}
+</style></head><body>
+<div class="top"><span class="logo"></span>Contoso Cloud Admin<span class="user">ana@contoso.example</span></div>
+<div class="wrap">
+<nav aria-label="Main"><a href="#">Overview</a><a href="#">Users</a><a href="#" aria-current="page">Access requests</a><a href="#">Containers</a><a href="#">Audit log</a></nav>
+<main>
+<h1>Access request</h1><p class="sub">Request elevated access to an environment.</p>
+<div class="card">
+<fieldset><legend>Environment</legend><label><input type="radio" name="env">Staging</label><label><input type="radio" name="env" checked>Production</label></fieldset>
+<label><input type="checkbox" checked>Notify security team</label><label><input type="checkbox">Temporary access</label>
+<div class="grid2"><div class="field"><label for="role">Role</label><input id="role" value="Application Admin"></div><div class="field"><label for="why">Justification</label><input id="why" value="Deploy hotfix 2.4.1"></div></div>
+</div>
+<div class="card">
+<table><thead><tr><th>Container</th><th>Status</th></tr></thead><tbody><tr><td>api</td><td class="ok">Up 3 hours</td></tr><tr><td>worker</td><td class="bad">Exited (1)</td></tr></tbody></table>
+<pre class="log">$ docker logs worker
+Error: connection refused :5432</pre>
+</div>
+</main></div></body></html>

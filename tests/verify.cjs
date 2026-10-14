@@ -240,6 +240,11 @@ const playwright = require("playwright");
  assert.equal(await qa.content(),domBefore,'reader does not mutate the DOM');
  // Índice desatualizado: o leitor confere o tipo e não inventa dado.
  assert.deepEqual(await qa.evaluate(`${reader};snapmdReadPage([{token:'x',kind:'canvas',index:99},{token:'y',kind:'xterm',index:5}])`),{});
+ // Revisão do PR (Devin): string numérica e callback que lê data[index] em vez de yLabel.
+ await qa.setContent('<canvas id="c"></canvas><script>window.Chart={instances:{1:{canvas:document.getElementById("c"),data:{labels:["a","b","c"],datasets:[{label:"Lat",data:["1","9","5"]}]},options:{tooltips:{callbacks:{label:(t,d)=>d.datasets[t.datasetIndex].label+": "+d.datasets[t.datasetIndex].data[t.index]+" ms"}}}}}};</script>');
+ const cs = await qa.evaluate(source);
+ const cr = (await qa.evaluate(reader+';snapmdReadPage('+JSON.stringify(cs.slots)+')'))[cs.slots[0].token];
+ assert.ok(cr.includes('| Lat | 5 ms | c | 1 ms | 9 ms | 5 ms |') && cr.includes('| b | 9 ms |'),'numeric strings and per-point index\n'+cr);
  // Valor de várias linhas dentro de lista, citação e link (sem o prefixo da linha, o Markdown quebrava).
  await qa.setContent('<ul><li>Uso <canvas></canvas></li><li>outro</li></ul><p>x <canvas></canvas></p><ul><li><p>Bloco</p><canvas></canvas></li><li>fim</li></ul><blockquote><p>Citação</p><canvas></canvas><p>continua</p></blockquote><p><a href="https://x.test/">ver <canvas></canvas></a></p>');
  const sl = await qa.evaluate(source);

@@ -1,68 +1,197 @@
+<div align="center">
+
+<img src="assets/hero.png" alt="The SnapMD popup open over an admin portal: the access-request form, with its checked radio and checkboxes and filled fields, appears as Markdown in the preview" width="100%">
+
 # SnapMD
 
-Abra a extensão para transformar o conteúdo da página em Markdown, incluindo perguntas, respostas e opções marcadas ou desmarcadas. Confira a prévia e copie para sua LLM, sem precisar tirar prints.
+**Copy what the page is *doing*, not just what it says.**<br>
+A Chrome and Edge extension that turns the page in front of you (form state, grids, terminals, open modals) into clean Markdown you can paste into ChatGPT, Claude or any LLM. No screenshots, and nothing leaves your browser.
 
-![Popup do SnapMD](assets/popup-preview.png)
+[![Release](https://img.shields.io/github/v/release/soulrocha/snapmd?label=release&color=66dfe4)](https://github.com/soulrocha/snapmd/releases/latest)
+[![CI](https://github.com/soulrocha/snapmd/actions/workflows/ci.yml/badge.svg)](https://github.com/soulrocha/snapmd/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-a187ed)](LICENSE)
+![Manifest V3](https://img.shields.io/badge/manifest-v3-649ee7)
+![Chrome | Edge](https://img.shields.io/badge/browser-Chrome%20%7C%20Edge-efa786)
 
-## Como usar
+[Install](#install) · [What it captures](#what-it-captures) · [Privacy](#privacy-and-permissions) · [Limitations](#limitations) · [Development](#development) · [Português](README.pt-BR.md)
 
-1. Abra a página que deseja capturar e clique no SnapMD.
-2. Confira o Markdown na prévia.
-3. Clique em **Copiar Markdown** ou no ícone de download para salvar um `.md`.
+</div>
 
-Atalhos: `Ctrl+Enter` para copiar, `Ctrl+S` para baixar e `Esc` para fechar. O Ladino reúne folhas durante a extração e comemora somente quando a cópia é confirmada. A preferência do sistema por movimento reduzido é respeitada.
+---
 
-Toda a extração ocorre no navegador. O SnapMD não envia dados a servidores e não preenche nem envia formulários. Confira o conteúdo antes de compartilhá-lo.
+## Why SnapMD?
 
-## Instalar
+Most "page to Markdown" tools are article clippers. They run Readability, keep the blog post and throw the rest away. Server-side readers such as Jina or Firecrawl fetch the URL again, so they never see your logged-in session, the tab you clicked, or the modal that is open right now.
 
-Com o [Git](https://git-scm.com/) instalado, clone o repositório na pasta de aplicativos do usuário (PowerShell):
+That is exactly the context you need when you ask an LLM about an **admin portal, a cloud console, a government form or an internal dashboard**. SnapMD reads the live DOM you are looking at and writes down its **state**:
+
+| You see | SnapMD writes |
+| --- | --- |
+| A checked radio or checkbox | `- [x] Production` / `- [ ] Staging` |
+| A filled input or select | `**Role:** Application Admin` |
+| A data grid with 500 rows, 40 rendered | A Markdown table plus a note that only 40 of 500 rows were rendered |
+| A web terminal (xterm.js, even on `<canvas>`) | A code block with the full scrollback |
+| A Chart.js chart | A table with last value, min, max and average |
+| A password, card number or OTP field | `_(oculto)_` (hidden). The value is never copied |
+
+## Features
+
+- **Form and control state**: checked, selected, value, disabled, expanded, active tab, focus and validation errors.
+- **Whole page in reading order**, including content below the fold: headings, nested lists, links with URLs, tables, ARIA grids, code, logs.
+- **Shadow DOM, same-origin and cross-origin iframes** (for example Microsoft Entra / Azure portal frames), open modals and toasts.
+- **Canvas content**: xterm.js terminals (such as the Portainer console) and Chart.js charts are read from the page's own JavaScript and become text. Other canvases are attached as an image.
+- **Page regions** (navigation, main content, forms) are labelled so the LLM knows what it is reading.
+- **Secrets stay out**: passwords, card fields, CVV, one-time codes and secret-looking fields are masked.
+- **Read-only**: SnapMD never fills, submits or changes the page. The test suite asserts the DOM is identical before and after a capture.
+- **Copy or download**: preview the Markdown, copy it, or save a `.md` file with YAML front matter (title, source URL, date).
+
+## Install
+
+SnapMD is not on the Chrome Web Store yet. Install it unpacked from a Git clone, so updating is a single `git pull`.
 
 ```powershell
 git clone https://github.com/soulrocha/snapmd.git "$env:LOCALAPPDATA\SnapMD"
 ```
 
-Abra `edge://extensions` ou `chrome://extensions`, ative **Modo do desenvolvedor**, escolha **Carregar sem compactação** e selecione a pasta `%LOCALAPPDATA%\SnapMD`. A pasta fica sempre na versão atual: não há uma pasta por versão.
+1. Open `edge://extensions` or `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and pick the `%LOCALAPPDATA%\SnapMD` folder.
 
-## Atualizar
+On macOS or Linux, clone into any folder (for example `~/.local/share/snapmd`) and load that folder.
+
+<details>
+<summary>Install without Git, or update</summary>
+
+**Without Git:** every [release](https://github.com/soulrocha/snapmd/releases/latest) ships a `snapmd-<version>.zip` with the same files. Extract it into one fixed folder and load that folder.
+
+**Update:**
 
 ```powershell
 git -C "$env:LOCALAPPDATA\SnapMD" pull
 ```
 
-Depois clique em **Recarregar** no card do SnapMD em `edge://extensions`.
+Then click **Reload** on the SnapMD card in `edge://extensions`.
 
-Instalou a 1.3.1 pelo ZIP? Remova o SnapMD em `edge://extensions`, apague a pasta `%LOCALAPPDATA%\SnapMD`, rode o `git clone` acima e carregue a pasta de novo. A 1.4.0 pede acesso a todos os sites para ler iframes de outra origem.
+**Coming from the 1.3.1 ZIP?** Remove SnapMD in `edge://extensions`, delete `%LOCALAPPDATA%\SnapMD`, run the `git clone` above and load the folder again. Version 1.4.0 and later ask for access to all sites so they can read cross-origin iframes.
 
-Prefere um pacote sem Git? Cada release no GitHub traz um `snapmd-<versão>.zip` com os mesmos arquivos; extraia-o na mesma pasta.
+</details>
 
-## Limites da captura
+## Usage
 
-A captura percorre a página inteira em ordem de leitura, inclusive abaixo da área atual de rolagem: títulos, listas, links com URL, tabelas e grids, código, logs e terminais, shadow DOM, iframes, modais e avisos (toasts). Regiões como navegação e conteúdo principal aparecem delimitadas. Cada controle sai com o estado (marcado, selecionado, valor, desabilitado, expandido, aba ativa, foco, erro de validação). Texto cortado com reticências ganha o texto completo do tooltip. Senhas, campos de cartão e códigos de uso único nunca têm o valor copiado.
+1. Open the page you want to capture and click the SnapMD icon.
+2. Check the Markdown in the preview.
+3. Click **Copiar Markdown** (Copy Markdown) or the download icon.
 
-Para ler iframes de outra origem, como os de portais Microsoft, a extensão pede acesso a todos os sites (`<all_urls>`). Ela só lê a página quando você clica no ícone.
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+Enter` | Copy Markdown |
+| `Ctrl+S` | Download `.md` |
+| `Esc` | Close |
 
-Limites: linhas de grid ou log virtualizado que a página ainda não carregou não estão no DOM e não aparecem (a captura informa "N de M linhas renderizadas" quando o grid declara o total). Do terminal com texto no DOM sai só o que está na tela; o histórico rolado não fica no DOM. Terminal xterm.js 3 desenhado em canvas (console do Portainer) sai com o histórico inteiro, lido do próprio terminal; em outro terminal em canvas, a captura anexa a imagem dele. Gráficos Chart.js viram tabela (último valor com horário, mínimo, máximo e médio, na unidade do tooltip); gráfico Chart.js sem dados legíveis vira imagem. Terminal ou gráfico em canvas dentro de shadow DOM ou de iframe da mesma origem sai só com o aviso. Outros canvas, imagens sem texto alternativo e PDFs não fornecem texto. Iframes de outra origem ocultos na página são descartados pela URL; um iframe visível dentro de outro iframe oculto, ou um iframe oculto que mudou de endereço, ainda pode aparecer. Páginas internas do navegador são restritas. O botão **Tentar novamente** repete a captura sem recarregar a página e sem perder os dados do formulário.
+**Tentar novamente** (Try again) repeats the capture without reloading the page, so form data is not lost.
 
-## Desenvolvimento e publicação
+<img src="assets/demo.gif" alt="Demo: clicking the SnapMD icon on an admin portal, the popup captures the page, the preview scrolls to the checked boxes and the Markdown is copied" width="100%">
 
-Com Node.js, Playwright e um navegador Chromium instalados:
+<sub>16-second demo with the real popup. Also available as [MP4](assets/demo.mp4).</sub>
 
-```powershell
-node --check popup.js
-node --check extractor.js
-node tests/verify.cjs
-powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
+> [!NOTE]
+> The popup and the annotations SnapMD adds to the Markdown (such as `[botão: …]` or `_(oculto)_`) are in Brazilian Portuguese for now. English localization is on the [roadmap](#roadmap). Page content is always copied in its original language.
+
+## What it captures
+
+Real output for the page in the image above, cut from the full capture:
+
+```markdown
+# Access request
+
+Request elevated access to an environment.
+
+**Environment**
+
+- [ ] Staging
+- [x] Production
+- [x] Notify security team
+- [ ] Temporary access
+
+**Role:** Application Admin
+
+**Justification:** Deploy hotfix 2.4.1
+
+| Container | Status |
+| --- | --- |
+| api | Up 3 hours |
+| worker | Exited (1) |
 ```
 
-Depois do merge do PR, publique a release usando o ZIP gerado:
+The full file also has YAML front matter (title, source, date) and region markers such as the start and end of the main content.
+
+## Privacy and permissions
+
+All extraction runs in your browser. SnapMD has no server, no analytics and no network calls, and it only reads a page when you click its icon.
+
+| Permission | Why |
+| --- | --- |
+| `activeTab`, `scripting` | Run the extractor on the current tab when you click the icon |
+| `<all_urls>` (host) | Read **cross-origin iframes**, such as Microsoft login and portal frames, which `activeTab` alone cannot reach |
+| `tabs` | Read the current tab's title and URL for the preview and the file name |
+| `clipboardWrite` | Copy the Markdown |
+
+Always review the Markdown before you share it. It contains whatever the page shows.
+
+## Limitations
+
+- **Virtualized grids and logs**: rows the page has not rendered are not in the DOM. When the grid declares a total, SnapMD notes how many of them were rendered.
+- **DOM terminals**: only what is on screen. Scrolled-off history is not in the DOM.
+- **Canvas**: xterm.js 3 terminals and Chart.js charts are read in full. xterm.js 4 and 5 are only read when the page makes the terminal accessible. Other canvas terminals and charts are attached as an image. Canvas inside shadow DOM or a same-origin iframe only gets a note.
+- **No text available**: other canvases, images without alt text and PDFs.
+- **Hidden cross-origin iframes** are dropped by URL. A visible iframe nested inside a hidden one, or a hidden iframe that navigated, may still appear.
+- Internal browser pages (`edge://`, `chrome://`, the store) cannot be captured.
+
+## Development
+
+Requirements: Node.js 20+ and Microsoft Edge (or set `SNAPMD_BROWSER=chromium` after `npx playwright install chromium`).
 
 ```powershell
-gh release create v1.5.0 dist/snapmd-1.5.0.zip --repo soulrocha/snapmd --target main --title "SnapMD 1.5.0" --generate-notes
+npm install
+npm run check      # node --check on every script
+npm test           # Playwright end-to-end suite (tests/verify.cjs)
+npm run hero       # re-render assets/hero.png and assets/social-preview.png from the real popup
+npm run demo       # record assets/demo.mp4 and assets/demo.gif (needs ffmpeg)
+npm run package    # build dist/snapmd-<version>.zip
 ```
 
-O empacotamento inclui somente os arquivos necessários à extensão e a documentação. A release não é publicada pelo script.
+`npm test` also re-renders `assets/popup-preview.png`. Set `SNAPMD_SCREENSHOT` to write it somewhere else.
 
-## Créditos e licença
+**Release:** bump `version` in `manifest.json` and `package.json`, update [CHANGELOG.md](CHANGELOG.md), merge, then:
 
-O Ladino vem do [Claude Code Hero Journey](https://github.com/soulrocha/Claude-code-hero-journey), de Saulo Rocha, sob licença MIT. Sua licença acompanha a extensão em [assets/hero-journey-LICENSE.txt](assets/hero-journey-LICENSE.txt). SnapMD também usa [licença MIT](LICENSE).
+```powershell
+gh release create v1.5.0 dist/snapmd-1.5.0.zip --target main --title "SnapMD 1.5.0" --generate-notes
+```
+
+The package script only collects the files the extension needs plus the docs. It does not publish anything.
+
+### Project layout
+
+```
+manifest.json     MV3 manifest
+popup.html/.css/.js   popup UI, preview, copy and download
+extractor.js      DOM-to-Markdown walker (injected into every frame)
+page-reader.js    reads xterm.js and Chart.js data in the page's MAIN world
+tests/verify.cjs  Playwright suite with synthetic pages
+scripts/          release packaging and hero rendering
+```
+
+## Roadmap
+
+- [ ] English UI and annotations (`_locales`), with pt-BR kept
+- [ ] Chrome Web Store and Edge Add-ons listings
+- [ ] Copy only a selected region of the page
+- [ ] More canvas readers (other chart libraries, xterm.js 4 and 5)
+
+Ideas and bug reports are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Credits and license
+
+The Rogue mascot (Ladino) comes from [Claude Code Hero Journey](https://github.com/soulrocha/Claude-code-hero-journey) by Saulo Rocha, under the MIT license. Its license ships with the extension in [assets/hero-journey-LICENSE.txt](assets/hero-journey-LICENSE.txt).
+
+SnapMD is released under the [MIT License](LICENSE).

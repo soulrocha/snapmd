@@ -1,0 +1,35 @@
+{
+  "name": "snapmd",
+  "version": "1.5.0",
+  "private": true,
+  "description": "Chrome and Edge extension that turns the live page (form state, grids, terminals, modals) into LLM-ready Markdown, 100% local.",
+  "license": "MIT",
+  "author": "Saulo Rocha de Assis",
+  "homepage": "https://github.com/soulrocha/snapmd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soulrocha/snapmd.git"
+  },
+  "bugs": "https://github.com/soulrocha/snapmd/issues",
+  "keywords": [
+    "chrome-extension",
+    "edge-extension",
+    "markdown",
+    "llm",
+    "web-to-markdown",
+    "manifest-v3"
+  ],
+  "scripts": {
+    "check": "node --check extractor.js && node --check page-reader.js && node --check popup.js && node --check tests/verify.cjs && node --check scripts/render-hero.cjs && node --check scripts/record-demo.cjs",
+    "test": "node tests/verify.cjs",
+    "hero": "node scripts/render-hero.cjs",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
+    "demo": "node scripts/record-demo.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

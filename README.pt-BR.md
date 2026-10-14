@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/hero.png" alt="O SnapMD transforma um formulário de pedido de acesso, um grid de containers e um log em Markdown com caixas marcadas, valores dos campos, tabela e bloco de código" width="100%">
+<img src="assets/hero.png" alt="O popup do SnapMD aberto sobre um portal administrativo: o formulário de pedido de acesso, com rádio e caixas marcadas e campos preenchidos, aparece como Markdown na prévia" width="100%">
 
 # SnapMD
 
@@ -94,10 +94,12 @@ Depois clique em **Recarregar** no card do SnapMD em `edge://extensions`.
 
 ## O que captura
 
-Saída real do formulário da imagem acima, recortada da captura completa:
+Saída real da página da imagem acima, recortada da captura completa:
 
 ```markdown
-## Access request
+# Access request
+
+Request elevated access to an environment.
 
 **Environment**
 
@@ -148,7 +150,7 @@ Requisitos: Node.js 20+ e Microsoft Edge (ou defina `SNAPMD_BROWSER=chromium` de
 npm install
 npm run check      # node --check em todos os scripts
 npm test           # suíte ponta a ponta com Playwright (tests/verify.cjs)
-npm run hero       # gera de novo assets/hero.png e assets/social-preview.png
+npm run hero       # gera de novo assets/hero.png e assets/social-preview.png a partir do popup real
 npm run package    # gera dist/snapmd-<versão>.zip
 ```
 

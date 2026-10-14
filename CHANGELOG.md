@@ -5,7 +5,10 @@ All notable changes to SnapMD are listed here. The format follows [Keep a Change
 ## [Unreleased]
 
 ### Added
-- English README with a Brazilian Portuguese translation (`README.pt-BR.md`), a new hero image built from real output, and a social preview.
+- English README with a Brazilian Portuguese translation (`README.pt-BR.md`), and a hero image and social preview rendered from the real popup over a sample page (`npm run hero`).
+
+### Changed
+- New pixel-art icon with the Rogue holding a Markdown page, also shown next to the name in the popup header.
 - `package.json` with `check`, `test`, `hero` and `package` scripts.
 - GitHub Actions CI on Windows with Microsoft Edge: syntax check, end-to-end tests and the release ZIP as an artifact.
 - Issue and pull request templates, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.editorconfig`, `.gitattributes` and Dependabot.

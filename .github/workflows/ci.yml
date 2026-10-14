@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - name: Version in package.json matches manifest.json
+        shell: pwsh
+        run: |
+          $m = (Get-Content manifest.json -Raw | ConvertFrom-Json).version
+          $p = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($m -ne $p) { throw "manifest.json is $m but package.json is $p" }
+      - name: End-to-end tests (Microsoft Edge)
+        run: npm test
+        env:
+          SNAPMD_SCREENSHOT: ${{ runner.temp }}/popup-preview.png
+      - name: Package
+        run: npm run package -- -OutputDirectory "${{ runner.temp }}/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapmd-zip
+          path: ${{ runner.temp }}/dist/*.zip

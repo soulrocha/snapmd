@@ -1,0 +1,15 @@
+name: Feature request
+description: A page, component or format SnapMD should handle
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to capture?
+      description: Describe the page or component and why the current output is not enough.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would good Markdown look like?

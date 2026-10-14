@@ -62,6 +62,17 @@
     };
     const elementKey = el => el.hasAttribute('srcdoc') ? 'about:srcdoc' : frameKey(el.src);
     const emitted = new WeakSet(); // checkbox/radio já emitido (pelo rótulo ou pelo próprio input)
+    // Canvas e terminal xterm: o texto só existe no JS da página. Fica um marcador que o popup troca
+    // pelo que o page-reader.js leu no world MAIN, ou pelo texto de sempre (fallback).
+    const nonce = Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join('');
+    const slots = [];
+    function slot(el, kind, fallback) {
+        const index = el.getRootNode() === document ? Array.prototype.indexOf.call(document.querySelectorAll(kind === 'xterm' ? '.xterm' : 'canvas'), el) : -1;
+        if (index < 0) return fallback;
+        const token = `SNAPMD${nonce}N${slots.length}`;
+        slots.push({ token, kind, index, fallback });
+        return token;
+    }
 
     let focused = document.activeElement;
     while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
@@ -237,7 +248,7 @@
 
     function codeSource(el, style) {
         if (el.matches('.monaco-editor')) return el.querySelector('.view-lines') || el;
-        if (el.matches('.xterm')) return el.querySelector('.xterm-rows') || el;
+        if (el.matches('.xterm')) return el.querySelector('.xterm-rows, .xterm-accessibility-tree') || el;
         if (el.matches('.ace_editor')) return el.querySelector('.ace_text-layer') || el;
         if (el.matches('.CodeMirror')) return el.querySelector('.CodeMirror-code') || el;
         if (el.localName === 'pre' || el.matches('.cm-content')) return el;
@@ -262,7 +273,7 @@
         if (cell) { if (text.trim()) buf += inlineCode(text.replace(/\n/g, ' ↵ ')); return; }
         flush();
         if (!text.trim()) {
-            if (el.matches('.xterm')) push('_(terminal sem texto no DOM: renderizado em canvas)_');
+            if (el.matches('.xterm')) push(slot(el, 'xterm', '_(terminal sem texto no DOM: renderizado em canvas)_'));
             return;
         }
         const fence = '`'.repeat(Math.max(3, ...(text.match(/`+/g) || []).map(r => r.length + 1)));
@@ -435,7 +446,8 @@
         if (tag === 'canvas' || tag === 'video' || tag === 'audio') {
             const name = { canvas: 'canvas', video: 'vídeo', audio: 'áudio' }[tag];
             const label = clean(attr(el, 'aria-label') || el.title || '');
-            buf += ` _[${name}${label ? `: ${esc(label)}` : ' sem texto acessível'}]_ `;
+            const text = `_[${name}${label ? `: ${esc(label)}` : ' sem texto acessível'}]_`;
+            buf += ` ${tag === 'canvas' && !cell ? slot(el, 'canvas', text) : text} `;
             return;
         }
 
@@ -589,7 +601,7 @@
         hiddenFrameUrls: [...new Set(frames.filter(f => !reachedFrames.has(f)).map(elementKey).filter(Boolean))]
     };
     const title = clean(document.title) || clean(document.querySelector('h1')?.textContent) || 'Página sem título';
-    if (!isTop) return { title, url: location.href, markdown: body, ...frameLists };
+    if (!isTop) return { title, url: location.href, markdown: body, slots, ...frameLists };
 
     const now = new Date().toLocaleString('pt-BR');
     let header = `---\ntitle: "${title.replace(/["\\]/g, '\\$&')}"\nsource: "${location.href}"\ndate: "${now}"\ntags:\n  - snapmd\n---\n\n`;
@@ -601,5 +613,5 @@
     dialogs.forEach(d => { header += `> **Diálogo aberto:** ${esc(d)}\n`; });
     const selected = clean(getSelection()?.toString());
     if (selected) header += `\n**Texto selecionado na página:**\n\n> ${esc(selected)}\n`;
-    return { title, url: location.href, markdown: `${header}\n${body}\n`, ...frameLists };
+    return { title, url: location.href, markdown: `${header}\n${body}\n`, slots, ...frameLists };
 })();

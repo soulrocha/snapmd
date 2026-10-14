@@ -113,13 +113,20 @@ function snapmdReadPage(slots) {
         const datasets = c.data.datasets;
         const v2 = c.options?.tooltips?.callbacks?.label;
         const v3 = c.options?.plugins?.tooltip?.callbacks?.label;
-        const num = p => typeof p === 'number' ? p : typeof p?.y === 'number' ? p.y : NaN;
-        // O valor sai como no tooltip do gráfico (com unidade), sem o prefixo "Série: ".
+        // Chart.js aceita número, string numérica ou { y } com qualquer dos dois.
+        const num = p => {
+            const v = p !== null && typeof p === 'object' ? p.y : p;
+            return typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN;
+        };
+        // O valor sai como no tooltip do gráfico (com unidade), sem o prefixo "Série: ". O callback recebe
+        // uma cópia dos dados com o ponto i valendo v: assim acerta também quem lê data[index] em vez de yLabel.
         const fmt = (d, i, v) => {
             let s;
             try {
-                s = typeof v2 === 'function' ? v2({ datasetIndex: d, index: i, xLabel: labels[i], label: labels[i], yLabel: v, value: String(v) }, c.data)
-                    : typeof v3 === 'function' ? v3.call(c.tooltip, { chart: c, dataset: datasets[d], datasetIndex: d, dataIndex: i, label: labels[i], parsed: { y: v }, raw: v, formattedValue: String(v) })
+                const ds = { ...datasets[d], data: Object.assign([...datasets[d].data], { [i]: v }) };
+                const data = { ...c.data, datasets: datasets.map((x, k) => k === d ? ds : x) };
+                s = typeof v2 === 'function' ? v2({ datasetIndex: d, index: i, xLabel: labels[i], label: labels[i], yLabel: v, value: String(v) }, data)
+                    : typeof v3 === 'function' ? v3.call(c.tooltip, { chart: c, dataset: ds, datasetIndex: d, dataIndex: i, label: labels[i], parsed: { y: v }, raw: v, formattedValue: String(v) })
                     : null;
             } catch (_) {}
             if (Array.isArray(s)) s = s.join(' ');
@@ -133,11 +140,10 @@ function snapmdReadPage(slots) {
             const points = (Array.isArray(ds?.data) ? ds.data : []).map((p, i) => [num(p), i]).filter(([v]) => Number.isFinite(v));
             const name = ds?.label || `Série ${d + 1}`;
             if (!points.length) return [name, 'sem dados', '', '', '', ''];
-            const values = points.map(([v]) => v);
             const [last, at] = points[points.length - 1];
-            const avg = values.reduce((a, b) => a + b, 0) / values.length;
-            const min = values.reduce((a, b) => Math.min(a, b)), max = values.reduce((a, b) => Math.max(a, b));
-            return [name, fmt(d, at, last), labels[at] ?? '', fmt(d, at, min), fmt(d, at, max), fmt(d, at, avg)];
+            const avg = points.reduce((a, [v]) => a + v, 0) / points.length;
+            const min = points.reduce((a, p) => p[0] < a[0] ? p : a), max = points.reduce((a, p) => p[0] > a[0] ? p : a);
+            return [name, fmt(d, at, last), labels[at] ?? '', fmt(d, min[1], min[0]), fmt(d, max[1], max[0]), fmt(d, at, avg)];
         });
         const parts = [];
         if (labels.length) parts.push(`_(gráfico: ${labels.length} pontos, de ${cell(labels[0])} a ${cell(labels[labels.length - 1])})_`);

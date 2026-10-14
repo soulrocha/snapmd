@@ -58,7 +58,7 @@ powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 Depois do merge do PR, publique a release usando o ZIP gerado:
 
 ```powershell
-gh release create v1.4.0 dist/snapmd-1.4.0.zip --repo soulrocha/snapmd --target main --title "SnapMD 1.4.0" --generate-notes
+gh release create v1.5.0 dist/snapmd-1.5.0.zip --repo soulrocha/snapmd --target main --title "SnapMD 1.5.0" --generate-notes
 ```
 
 O empacotamento inclui somente os arquivos necessários à extensão e a documentação. A release não é publicada pelo script.

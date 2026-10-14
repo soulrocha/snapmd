@@ -210,15 +210,48 @@ const playwright = require("playwright");
  assert.ok(dv2.includes('**IMEI:** 490154203237518'),'IMEI kept\n'+dv2);
  for(const secret of ['VAZOU1','VAZOU2','4111']) assert.ok(!dv2.includes(secret),secret+'\n'+dv2);
  assert.ok(dv2.includes('**CNPJ:** 11222333000181'),'CNPJ kept');
+
+ // Canvas e xterm em canvas: marcador no extractor, dados lidos pelo page-reader.js no world MAIN.
+ const reader = fs.readFileSync(path.join(__dirname,'../page-reader.js'),'utf8');
+ await qa.setContent(`<h3>Memory usage</h3><canvas id="mem" width="50" height="20"></canvas><p>Texto <canvas width="5" height="5"></canvas> no meio</p>
+ <div class="xterm"><div class="xterm-accessibility"><div class="xterm-accessibility-tree"><div>linha a</div><div>linha b</div></div></div></div>
+ <div class="xterm" id="t3"><canvas width="10" height="10"></canvas><textarea class="xterm-helper-textarea"></textarea></div>
+ <script>
+ window.Chart={instances:{1:{canvas:document.getElementById('mem'),data:{labels:['10:00:00','10:00:05','10:00:10'],datasets:[{label:'Memory',data:[1000,3000,2000]}]},options:{tooltips:{callbacks:{label:(t,d)=>d.datasets[t.datasetIndex].label+': '+(t.yLabel/1000).toFixed(1)+' kB'}}}}}};
+ // Imita o xterm 3 empacotado pelo webpack 5 (Portainer): o Terminal vive numa closure, a classe só no registro de módulos.
+ (()=>{const mods={7:function(m){/* xterm-helper-textarea */ class Terminal{constructor(el){this.element=el;this.buffer={lines:{length:3},translateBufferLineToString:i=>['','$ uptime',' 10:00 up 1 day'][i]};el.addEventListener('keyup',ev=>{if(ev.keyCode!==16)window.__focused=true;this._keyUp(ev);},true);} _keyUp(){window.__keyUpRan=true;}} m.exports={Terminal};}};
+ const cache={};function req(id){if(!cache[id]){cache[id]={exports:{}};mods[id](cache[id]);}return cache[id].exports;}req.m=mods;
+ window.webpackChunkfake=[];window.webpackChunkfake.push=function(d){if(d[2])d[2](req);return Array.prototype.push.call(this,d);};
+ const {Terminal}=req(7);new Terminal(document.getElementById('t3'));})();
+ </script>`);
+ const sx = await qa.evaluate(source);
+ assert.equal(sx.slots.length,3,'canvas, inline canvas, canvas terminal\n'+JSON.stringify(sx.slots));
+ assert.ok(sx.markdown.includes('```\nlinha a\nlinha b\n```'),'xterm accessibility tree\n'+sx.markdown);
+ const domBefore = await qa.content();
+ const read = await qa.evaluate(`${reader};snapmdReadPage(${JSON.stringify(sx.slots)})`);
+ const [memSlot,inlineSlot,termSlot] = sx.slots;
+ assert.ok(read[memSlot.token].includes('| Memory | 2.0 kB | 10:00:10 | 1.0 kB | 3.0 kB | 2.0 kB |'),'chart summary\n'+read[memSlot.token]);
+ assert.ok(read[memSlot.token].includes('| 10:00:05 | 3.0 kB |'),'recent values');
+ assert.equal(read[inlineSlot.token],undefined,'unknown canvas keeps fallback');
+ assert.equal(read[termSlot.token],'```text\n$ uptime\n 10:00 up 1 day\n```','xterm 3 buffer via webpack');
+ assert.deepEqual(await qa.evaluate(()=>[window.__keyUpRan,window.__focused]),[undefined,undefined],'synthetic Shift has no side effect');
+ await qa.evaluate(()=>document.getElementById('t3').dispatchEvent(new KeyboardEvent('keyup')));
+ assert.equal(await qa.evaluate(()=>window.__keyUpRan),true,'_keyUp restored');
+ assert.equal(await qa.content(),domBefore,'reader does not mutate the DOM');
+ // Índice desatualizado: o leitor confere o tipo e não inventa dado.
+ assert.deepEqual(await qa.evaluate(`${reader};snapmdReadPage([{token:'x',kind:'canvas',index:99},{token:'y',kind:'xterm',index:5}])`),{});
+ // Valor de várias linhas dentro de lista, citação e link (sem o prefixo da linha, o Markdown quebrava).
+ await qa.setContent('<ul><li>Uso <canvas></canvas></li><li>outro</li></ul><p>x <canvas></canvas></p><ul><li><p>Bloco</p><canvas></canvas></li><li>fim</li></ul><blockquote><p>Citação</p><canvas></canvas><p>continua</p></blockquote><p><a href="https://x.test/">ver <canvas></canvas></a></p>');
+ const sl = await qa.evaluate(source);
  await qa.close();
  const popupURL='file:///'+path.resolve('popup.html').replace(/\\/g,'/');
- async function open(mode='success',reduced=false){
+ async function open(mode='success',reduced=false,data=result){
   const p=await browser.newPage({viewport:{width:400,height:560},reducedMotion:reduced?'reduce':'no-preference'});
   await p.addInitScript(({data,mode})=>{
    window.__attempts=0;window.__reloads=0;window.__copied='';
-   window.chrome={tabs:{query:async()=>mode==='absent'?[]:[{id:1,url:mode==='restricted'?'chrome://settings':'https://'+ 'a'.repeat(160)+'.test',title:'Título '.repeat(60)}],reload:()=>window.__reloads++},scripting:{executeScript:async(opts)=>{window.__attempts++;if(mode==='allframes-fail'&&opts.target.allFrames)throw Error('frame denied');if(mode==='frames')return [{frameId:0,result:{...data,shownFrameUrls:['https://login.microsoftonline.test/'],hiddenFrameUrls:['https://hidden.test/']}},{frameId:9,result:{url:'https://hidden.test/#/rota',markdown:'FRAMEOCULTO'}},{frameId:7,result:{title:'f',url:'https://login.microsoftonline.test/',markdown:'Conteúdo do frame'}},{frameId:8,result:null}];if(mode==='pending')return await new Promise(resolve=>window.__resolve=()=>resolve([{result:data}]));if(mode==='error'||(mode==='retry'&&window.__attempts<=2))throw Error('Synthetic failure');return [{result:mode==='empty'?{markdown:''}:data}];}}};
+   window.chrome={tabs:{query:async()=>mode==='absent'?[]:[{id:1,url:mode==='restricted'?'chrome://settings':'https://'+ 'a'.repeat(160)+'.test',title:'Título '.repeat(60)}],reload:()=>window.__reloads++},scripting:{executeScript:async(opts)=>{if(opts.world==='MAIN'){if(mode==='slots-fail')throw Error('main denied');return [{result:Object.fromEntries(opts.args[0].map((s,i)=>[s.token,i===1?{x:1}:'| t |\n| --- |']))}];}window.__attempts++;if(mode==='allframes-fail'&&opts.target.allFrames)throw Error('frame denied');if(mode==='frames')return [{frameId:0,result:{...data,shownFrameUrls:['https://login.microsoftonline.test/'],hiddenFrameUrls:['https://hidden.test/']}},{frameId:9,result:{url:'https://hidden.test/#/rota',markdown:'FRAMEOCULTO'}},{frameId:7,result:{title:'f',url:'https://login.microsoftonline.test/',markdown:'Conteúdo do frame'}},{frameId:8,result:null}];if(mode==='pending')return await new Promise(resolve=>window.__resolve=()=>resolve([{result:data}]));if(mode==='error'||(mode==='retry'&&window.__attempts<=2))throw Error('Synthetic failure');return [{result:mode==='empty'?{markdown:''}:data}];}}};
    Object.defineProperty(navigator,'clipboard',{value:{writeText:async t=>{if(window.__clipboardFail)throw Error('denied');if(window.__clipboardPending)await new Promise(resolve=>window.__clipboardResolve=resolve);window.__copied=t;}}});
-  },{data:result,mode});
+  },{data,mode});
   await p.goto(popupURL);return p;
  }
  const popup=await open();await popup.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);
@@ -233,6 +266,13 @@ const playwright = require("playwright");
  const retry=await open('retry');await retry.locator('#btnRetry').click();await retry.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);assert.equal(await retry.evaluate(()=>window.__attempts),3);assert.equal(await retry.evaluate(()=>window.__reloads),0);
  const framed=await open('frames');await framed.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);assert.ok(!/FRAMEOCULTO|NETOOCULTO/.test(await framed.locator('#markdownPreview').textContent()),'hidden frame and its children dropped');assert.ok((await framed.locator('#markdownPreview').textContent()).endsWith('---\n\n## Frame: https://login.microsoftonline.test/\n\nConteúdo do frame\n'),'frames appended');
  const fallback=await open('allframes-fail');await fallback.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);assert.equal(await fallback.evaluate(()=>window.__attempts),2);assert.equal(await fallback.locator('#markdownPreview').textContent(),md);
+ for(const mode of ['slots','slots-fail']){const p=await open(mode,false,sx);await p.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);const text=await p.locator('#markdownPreview').textContent();
+  assert.ok(!/SNAPMD[0-9a-f]{8}N/.test(text),'no leftover token\n'+text);
+  assert.ok(text.includes(mode==='slots'?'### Memory usage\n\n| t |\n| --- |\n\nTexto _[canvas sem texto acessível]_ no meio':'### Memory usage\n\n_[canvas sem texto acessível]_\n\nTexto _[canvas sem texto acessível]_ no meio'),mode+'\n'+text);
+  if(mode==='slots-fail')assert.ok(text.includes('_(terminal sem texto no DOM: renderizado em canvas)_'),'terminal fallback');await p.close();}
+ const nested=await open('slots',false,sl);await nested.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);const nt=await nested.locator('#markdownPreview').textContent();
+ for(const text of ['- Uso _[gráfico]_\n\n  | t |\n  | --- |\n\n- outro','x _[canvas sem texto acessível]_','> Citação\n>\n> | t |\n> | --- |\n>\n> continua','- Bloco\n\n  | t |\n  | --- |\n\n- fim','[ver _[gráfico]_](https://x.test/)\n\n| t |\n| --- |\n']) assert.ok(nt.includes(text),text+'\n---\n'+nt);
+ await nested.close();
  const reduced=await open('pending',true);await reduced.waitForFunction(()=>window.__resolve);assert.equal(await reduced.locator('.leaf').first().evaluate(e=>getComputedStyle(e).animationName),'none');
  console.log('PASS: passive complete extraction, states, retry without reload, clipboard confirmation/failure, Unicode download, reduced motion and 400x560 layout');
  } finally { await browser.close(); }

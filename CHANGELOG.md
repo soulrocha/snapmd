@@ -4,14 +4,19 @@ All notable changes to SnapMD are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
-### Added
-- English README with a Brazilian Portuguese translation (`README.pt-BR.md`), and a hero image and social preview rendered from the real popup over a sample page (`npm run hero`), plus a 16-second demo video and GIF of the real popup (`npm run demo`).
+## [1.6.0] - 2026-10-19
 
 ### Changed
+- Redesigned HUD with an integrated Code Card layout: actions (`Copy Markdown` and `Download`) and status badge moved to a unified top toolbar, expanding the Markdown preview area by 56% (from 240px to 375px).
+- Decoupled Rogue mascot collection animation (`.pet-stage.collecting`) with a 1000ms minimum duration in the background, allowing immediate action button access without blocking user productivity.
+- Respects `prefers-reduced-motion: reduce` for instant transitions without artificial delay.
 - New pixel-art icon with the Rogue holding a Markdown page, also shown next to the name in the popup header.
 - `package.json` with `check`, `test`, `hero` and `package` scripts.
 - GitHub Actions CI on Windows with Microsoft Edge: syntax check, end-to-end tests and the release ZIP as an artifact.
 - Issue and pull request templates, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.editorconfig`, `.gitattributes` and Dependabot.
+
+### Added
+- English README with a Brazilian Portuguese translation (`README.pt-BR.md`), and a hero image and social preview rendered from the real popup over a sample page (`npm run hero`), plus a 16-second demo video and GIF of the real popup (`npm run demo`).
 
 ### Removed
 - Unused images `assets/popup-1.3-preview.png` and `assets/snapmd-preview.jpg`.
@@ -44,7 +49,8 @@ All notable changes to SnapMD are listed here. The format follows [Keep a Change
 ### Added
 - First public release: full-page capture and the focused popup with the Rogue (Ladino) mascot.
 
-[Unreleased]: https://github.com/soulrocha/snapmd/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/soulrocha/snapmd/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/soulrocha/snapmd/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/soulrocha/snapmd/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/soulrocha/snapmd/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/soulrocha/snapmd/releases/tag/v1.3.1

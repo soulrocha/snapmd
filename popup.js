@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     popup.className = `popup ${name}`;
     status.textContent = message;
+    status.title = message || '';
     preview.setAttribute('aria-busy', String(name === 'extracting'));
     error.hidden = name !== 'error';
     preview.hidden = name === 'error';
@@ -73,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     data = null;
     const startTime = Date.now();
     petStage?.classList.add('collecting');
-    state('extracting', 'Reunindo o conteúdo da página…');
+    state('extracting', 'Extraindo…');
     preview.textContent = 'Extraindo o conteúdo da página…';
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -139,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
       celebrationTimer = setTimeout(() => popup.classList.remove('copied'), 400);
     } catch {
       popup.classList.remove('copied');
-      status.textContent = 'Não foi possível copiar. Tente novamente ou baixe o arquivo.';
+      status.textContent = status.title = 'Não foi possível copiar. Tente novamente ou baixe o arquivo.';
     } finally { copy.disabled = !data; }
   }
 
@@ -152,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
     link.download = `${title}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.md`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    status.textContent = 'Download solicitado';
+    status.textContent = status.title = 'Download solicitado';
   }
 
   copy.addEventListener('click', copyMarkdown);

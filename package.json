@@ -1,6 +1,6 @@
 {
   "name": "snapmd",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Chrome and Edge extension that turns the live page (form state, grids, terminals, modals) into LLM-ready Markdown, 100% local.",
   "license": "MIT",

@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
   const popup = document.querySelector('.popup');
+  const petStage = document.querySelector('.pet-stage');
   const preview = document.getElementById('markdownPreview');
   const status = document.getElementById('status');
   const copy = document.getElementById('btnCopy');
@@ -8,9 +9,14 @@ document.addEventListener('DOMContentLoaded', () => {
   let data = null;
   let busy = false;
   let celebrationTimer;
+  let collectTimer;
 
   function state(name, message) {
     clearTimeout(celebrationTimer);
+    if (name === 'copied' || name === 'error') {
+      clearTimeout(collectTimer);
+      petStage?.classList.remove('collecting');
+    }
     popup.className = `popup ${name}`;
     status.textContent = message;
     preview.setAttribute('aria-busy', String(name === 'extracting'));
@@ -65,6 +71,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (busy) return;
     busy = true;
     data = null;
+    const startTime = Date.now();
+    petStage?.classList.add('collecting');
     state('extracting', 'Reunindo o conteúdo da página…');
     preview.textContent = 'Extraindo o conteúdo da página…';
     try {
@@ -106,6 +114,17 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('pageTitle').title = result.title || tab.title || '';
       preview.textContent = result.markdown;
       state('ready', 'Markdown pronto');
+
+      const minDuration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1000;
+      const remaining = Math.max(0, minDuration - (Date.now() - startTime));
+      clearTimeout(collectTimer);
+      if (remaining > 0) {
+        collectTimer = setTimeout(() => {
+          petStage?.classList.remove('collecting');
+        }, remaining);
+      } else {
+        petStage?.classList.remove('collecting');
+      }
     } catch {
       failure('Não foi possível capturar', 'O navegador recusou a leitura desta página. Confira a permissão da extensão e tente novamente.');
     } finally { busy = false; }

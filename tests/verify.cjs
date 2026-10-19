@@ -264,7 +264,15 @@ const playwright = require("playwright");
   },{data,mode});
   await p.goto(popupURL);return p;
  }
- const popup=await open();await popup.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);
+ const tPop = Date.now();
+ const popup = await open();
+ await popup.waitForFunction(() => !document.querySelector('#btnCopy').disabled);
+ const popElapsed = Date.now() - tPop;
+ assert.ok(popElapsed < 600, `botão habilitado imediatamente (${popElapsed}ms)`);
+ assert.ok(await popup.locator('.pet-stage.collecting').count() > 0, 'animação do ladino continua rolando no fundo');
+ await popup.waitForFunction(() => !document.querySelector('.pet-stage').classList.contains('collecting'));
+ const animElapsed = Date.now() - tPop;
+ assert.ok(animElapsed >= 950, `duração mínima da animação do ladino respeitada (${animElapsed}ms)`);
  await popup.locator('#btnCopy').click();assert.equal(await popup.evaluate(()=>window.__copied),md);
  const downloadEvent=popup.waitForEvent('download');await popup.keyboard.press('Control+s');const downloaded=await downloadEvent;assert.match(downloaded.suggestedFilename(),/^[a-z0-9-]+-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.md$/);assert.equal(fs.readFileSync(await downloaded.path(),'utf8'),md);
  await popup.waitForTimeout(450);await popup.waitForFunction(()=>document.querySelector('.pet').complete && document.querySelector('.pet').naturalWidth>0);await popup.evaluate(()=>{document.getElementById('source').textContent='exemplo.gov.br';document.getElementById('status').textContent='Markdown pronto';const preview=document.getElementById('markdownPreview');const index=preview.textContent.indexOf('### Você foi indicado?');const preceding=preview.textContent.slice(0,index).split('\n').length;preview.scrollTop=Math.max(0,(preceding-2)*19.2);});await popup.screenshot({path:process.env.SNAPMD_SCREENSHOT||path.join(__dirname,'../assets/popup-preview.png')});
@@ -284,6 +292,11 @@ const playwright = require("playwright");
  for(const text of ['- Uso _[gráfico]_\n\n  | t |\n  | --- |\n\n- outro','x _[canvas sem texto acessível]_','> Citação\n>\n> | t |\n> | --- |\n>\n> continua','- Bloco\n\n  | t |\n  | --- |\n\n- fim','[ver _[gráfico]_](https://x.test/)\n\n| t |\n| --- |\n']) assert.ok(nt.includes(text),text+'\n---\n'+nt);
  await nested.close();
  const reduced=await open('pending',true);await reduced.waitForFunction(()=>window.__resolve);assert.equal(await reduced.locator('.leaf').first().evaluate(e=>getComputedStyle(e).animationName),'none');
+ const tRed = Date.now(); const quick = await open('success', true);
+ await quick.waitForFunction(() => !document.querySelector('#btnCopy').disabled);
+ const redElapsed = Date.now() - tRed;
+ assert.ok(redElapsed < 800, `reducedMotion deve ser imediato sem delay (${redElapsed}ms)`);
+ await quick.close();
  console.log('PASS: passive complete extraction, states, retry without reload, clipboard confirmation/failure, Unicode download, reduced motion and 400x560 layout');
  } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});

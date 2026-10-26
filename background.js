@@ -22,11 +22,13 @@ function dataUrl(text) {
     return `data:text/markdown;charset=utf-8;base64,${btoa(bin)}`;
 }
 
-async function start(tabId) {
-    if (run?.running) return;
+// `ack` responde ao popup assim que a sequência começa (ou o motivo de não começar).
+async function start(tabId, ack) {
+    if (run?.running) return ack({ ok: false, reason: 'busy' });
     const tab = await chrome.tabs.get(tabId);
-    if (snapmdIsRestricted(tab.url || '')) return;
+    if (snapmdIsRestricted(tab.url || '')) return ack({ ok: false, reason: 'restricted' });
     run = { tabId, count: 0, running: true, stop: false };
+    ack({ ok: true });
     broadcast();
     const exec = async func => (await chrome.scripting.executeScript({ target: { tabId }, func }))[0]?.result;
     const current = run;
@@ -48,7 +50,15 @@ async function start(tabId) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
-    if (message?.type === 'sequence-start') start(message.tabId).catch(() => { if (run) { run.running = false; run.reason = 'error'; broadcast(); } });
+    if (message?.type === 'sequence-start') {
+        let answered = false;
+        const ack = value => { if (!answered) { answered = true; reply(value); } };
+        start(message.tabId, ack).catch(() => {
+            ack({ ok: false, reason: 'error' });
+            if (run?.running) { run.running = false; run.reason = 'error'; broadcast(); }
+        });
+        return true; // resposta assíncrona
+    }
     if (message?.type === 'sequence-stop' && run) run.stop = true;
     if (message?.type === 'sequence-get') reply(run && { tabId: run.tabId, count: run.count, running: run.running, reason: run.reason, file: run.file });
 });

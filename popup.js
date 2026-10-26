@@ -127,13 +127,24 @@ document.addEventListener('DOMContentLoaded', () => {
     status.textContent = status.title = message;
   }
 
+  // Sem resposta do background, o clique não pode morrer calado: o caso comum é a extensão
+  // atualizada no disco sem recarregar (o popup é relido, o service worker novo não existe).
+  async function startSequence() {
+    status.textContent = status.title = 'Iniciando sequência…';
+    let answer;
+    try { answer = await chrome.runtime.sendMessage({ type: 'sequence-start', tabId }); } catch { answer = null; }
+    if (answer?.ok) return;
+    const why = { busy: 'Já há uma sequência rodando', restricted: 'O navegador não permite capturar esta página', error: 'A página recusou a leitura' }[answer?.reason];
+    status.textContent = status.title = why || 'O serviço da extensão não respondeu. Recarregue o SnapMD na página de extensões e tente de novo.';
+  }
+
   if (chrome.runtime?.sendMessage) {
     sequence.hidden = false;
     chrome.runtime.onMessage.addListener(message => { if (message?.type === 'sequence-state') showSequence(message.state); });
     chrome.runtime.sendMessage({ type: 'sequence-get' }).then(showSequence).catch(() => {});
     sequence.addEventListener('click', () => {
       if (sequenceState?.running) chrome.runtime.sendMessage({ type: 'sequence-stop' }).catch(() => {});
-      else if (tabId != null) chrome.runtime.sendMessage({ type: 'sequence-start', tabId }).catch(() => {});
+      else if (tabId != null) startSequence();
     });
   }
 

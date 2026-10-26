@@ -344,14 +344,17 @@ const playwright = require("playwright");
  await seqPopup.addInitScript(data=>{
   window.__sent=[];const listeners=[];
   window.chrome={tabs:{query:async()=>[{id:5,url:'https://quiz.test/',title:'Quiz'}]},scripting:{executeScript:async()=>[{result:data}]},
-   runtime:{sendMessage:async m=>{window.__sent.push(m);return m.type==='sequence-get'?null:undefined;},onMessage:{addListener:f=>listeners.push(f)}}};
+   runtime:{sendMessage:async m=>{window.__sent.push(m);if(window.__noBackground&&m.type==='sequence-start')throw Error('Could not establish connection. Receiving end does not exist.');return m.type==='sequence-get'?null:m.type==='sequence-start'?{ok:true}:undefined;},onMessage:{addListener:f=>listeners.push(f)}}};
   window.__emit=state=>listeners.forEach(f=>f({type:'sequence-state',state}));
  },result);
  await seqPopup.goto(popupURL);
  await seqPopup.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);
  assert.equal(await seqPopup.locator('#btnSequence').isVisible(),true);
- await seqPopup.locator('#btnSequence').click();
+ await seqPopup.evaluate(()=>window.__noBackground=true);await seqPopup.locator('#btnSequence').click();
+ await seqPopup.waitForFunction(()=>document.querySelector('#status').textContent.includes('Recarregue o SnapMD'));
+ await seqPopup.evaluate(()=>window.__noBackground=false);await seqPopup.locator('#btnSequence').click();
  assert.deepEqual(await seqPopup.evaluate(()=>window.__sent.at(-1)),{type:'sequence-start',tabId:5});
+ assert.equal(await seqPopup.locator('#status').textContent(),'Iniciando sequência…');
  await seqPopup.evaluate(()=>window.__emit({tabId:5,count:3,running:true}));
  assert.equal(await seqPopup.locator('#status').textContent(),'Sequência: 3 telas…');
  assert.equal(await seqPopup.locator('#btnSequence').getAttribute('aria-label'),'Parar sequência');

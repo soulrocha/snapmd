@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content -LiteralPath (Join-Path $root 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = $manifest.version
-$files = @('manifest.json','extractor.js','popup.html','popup.css','popup.js','page-reader.js','README.md','README.pt-BR.md','CHANGELOG.md','LICENSE','assets/ladino.svg','assets/hero-journey-LICENSE.txt','assets/popup-preview.png','icons/icon.svg','icons/icon-16.png','icons/icon-48.png','icons/icon-128.png','icons/icon-512.png')
+$files = @('manifest.json','extractor.js','popup.html','popup.css','popup.js','page-reader.js','capture.js','sequence.js','background.js','README.md','README.pt-BR.md','CHANGELOG.md','LICENSE','assets/ladino.svg','assets/hero-journey-LICENSE.txt','assets/popup-preview.png','icons/icon.svg','icons/icon-16.png','icons/icon-48.png','icons/icon-128.png','icons/icon-512.png')
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $dist = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $root 'dist' }

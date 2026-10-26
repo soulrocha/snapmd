@@ -4,6 +4,17 @@ All notable changes to SnapMD are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-25
+
+### Added
+- "Capture sequence" button: captures the page, clicks the "Next" control, waits for the page to change and settle, and repeats, then downloads every screen as a single `.md` with one header. Built for quizzes, wizards and paginated content.
+- The "Next" control is found by label (Next, Próximo, Avançar, ›, ») or `rel="next"`, or by attributes such as `data-cy="next-btn"`, including buttons inside shadow DOM (Ionic `<ion-button>`). It never clicks Finish, Submit, Send or Pay and never answers questions.
+- The sequence stops when "Next" is missing or disabled, the page does not change, a screen repeats, after 300 screens, or when the button is clicked again. Clocks and countdowns do not count as a change.
+- Background service worker (`background.js`), so the sequence keeps running with the popup closed; the toolbar badge shows the screen count. New `downloads` permission.
+
+### Changed
+- The capture flow moved from `popup.js` to `capture.js`, shared by the popup and the service worker.
+
 ## [1.6.0] - 2026-10-19
 
 ### Changed

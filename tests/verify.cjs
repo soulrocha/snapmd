@@ -297,6 +297,70 @@ const playwright = require("playwright");
  const redElapsed = Date.now() - tRed;
  assert.ok(redElapsed < 800, `reducedMotion deve ser imediato sem delay (${redElapsed}ms)`);
  await quick.close();
- console.log('PASS: passive complete extraction, states, retry without reload, clipboard confirmation/failure, Unicode download, reduced motion and 400x560 layout');
+ // Captura em sequência: quiz em SPA com botões em shadow DOM (como o <ion-button> do ClassMarker),
+ // cronômetro que muda a cada segundo e "Finish" na última questão.
+ const sequenceSource = fs.readFileSync(path.join(__dirname,'../sequence.js'),'utf8');
+ const quiz = await browser.newPage();
+ await quiz.route('https://quiz.test/', route=>route.fulfill({contentType:'text/html; charset=utf-8',body:`<!doctype html><title>Quiz sintético</title><body>
+ <p>Time left: <span id="t">00:29:59</span></p><main id="q"></main><nav id="nav"></nav>
+ <script>
+ customElements.define('x-button',class extends HTMLElement{constructor(){super();this.attachShadow({mode:'open'}).innerHTML='<button type="button"><slot></slot></button>';}});
+ let i=0,clicks={finish:0};const total=4;window.__clicks=clicks;
+ setInterval(()=>{document.getElementById('t').textContent='00:'+String(Math.floor(Math.random()*60)).padStart(2,'0')+':00';},50);
+ function render(){document.getElementById('q').innerHTML='<h2>Question '+(i+1)+' of '+total+'</h2><p>Pergunta número '+(i+1)+'?</p><label><input type="radio" name="a">Opção A'+(i+1)+'</label><label><input type="radio" name="a">Opção B'+(i+1)+'</label>';
+  document.getElementById('nav').innerHTML='<x-button data-cy="previous-btn">Previous</x-button>'+(i<total-1?'<x-button data-cy="next-btn">Next <span aria-hidden="true">›</span></x-button>':'<x-button data-cy="finish-btn">Finish</x-button>');}
+ document.addEventListener('click',e=>{const b=e.target.closest('x-button');if(!b)return;const cy=b.dataset.cy;if(cy==='finish-btn')clicks.finish++;
+  // SPA lenta: limpa a tela e só desenha a próxima depois de um tempo.
+  if(cy==='next-btn'){document.getElementById('q').textContent='Carregando…';setTimeout(()=>{i++;render();},120);}});
+ render();
+ </script></body>`}));
+ await quiz.goto('https://quiz.test/');
+ const runSeq = (opts={}) => quiz.evaluate(async ({sequenceSource,source,opts})=>{
+  (0,eval)(sequenceSource+';window.__seq={snapmdRunSequence,snapmdPageFingerprint,snapmdClickNext};');
+  const {snapmdRunSequence,snapmdPageFingerprint,snapmdClickNext}=window.__seq;const counts=[];
+  return {...await snapmdRunSequence({capture:()=>(0,eval)(source),fingerprint:snapmdPageFingerprint,clickNext:snapmdClickNext,progress:s=>counts.push(s.count),shouldStop:()=>false,sleep:ms=>new Promise(r=>setTimeout(r,ms))},opts),counts};
+ },{sequenceSource,source,opts});
+ const seq = await runSeq();
+ assert.equal(seq.steps,4,JSON.stringify(seq));assert.equal(seq.reason,'missing');assert.deepEqual(seq.counts,[1,2,3,4]);assert.equal(seq.title,'Quiz sintético');
+ for(let n=1;n<=4;n++){assert.ok(seq.markdown.includes(`Question ${n} of 4`)&&seq.markdown.includes(`Opção B${n}`),'question '+n+'\n'+seq.markdown);assert.ok(seq.markdown.includes(`<!-- SnapMD: tela ${n} de 4 -->`));}
+ assert.ok(!seq.markdown.includes('Carregando'),'waits for the slow render');
+ assert.ok(seq.markdown.startsWith('---\ntitle: "Quiz sintético"'),'frontmatter on top');assert.equal(seq.markdown.match(/\*\*Fonte:\*\*/g).length,1,'header once');assert.equal(seq.markdown.match(/^title:/gm).length,1,'one frontmatter');
+ assert.equal(await quiz.evaluate(()=>window.__clicks.finish),0,'never clicks Finish');
+ assert.equal(await quiz.evaluate(()=>[...document.querySelectorAll('input:checked')].length),0,'never answers');
+ // Botão que não muda nada, botão desabilitado e página sem avançar: para com o motivo certo.
+ await quiz.setContent('<p>Fixa</p><button onclick="">Next</button>');
+ assert.equal((await runSeq({changeTimeout:400})).reason,'unchanged');
+ await quiz.setContent('<p>Fim</p><button disabled>Próximo</button>');
+ assert.equal((await runSeq()).reason,'disabled');
+ await quiz.setContent('<p>Envio</p><button>Submit</button><a href="/next-step" class="btn-submit">Enviar</a>');
+ const none = await runSeq(); assert.equal(none.reason,'missing'); assert.equal(none.steps,1);
+ // Paginação que volta ao início: para na repetição.
+ await quiz.setContent('<p id="p">Página 1</p><a href="#" rel="next" onclick="event.preventDefault();const p=document.getElementById(\'p\');p.textContent=p.textContent===\'Página 1\'?\'Página 2\':\'Página 1\'">»</a>');
+ const loop = await runSeq(); assert.equal(loop.reason,'repeated'); assert.equal(loop.steps,2);
+ await quiz.close();
+
+ // Popup com o background disponível: o botão aparece, inicia, mostra o progresso e para.
+ const seqPopup = await browser.newPage({viewport:{width:400,height:560}});
+ await seqPopup.addInitScript(data=>{
+  window.__sent=[];const listeners=[];
+  window.chrome={tabs:{query:async()=>[{id:5,url:'https://quiz.test/',title:'Quiz'}]},scripting:{executeScript:async()=>[{result:data}]},
+   runtime:{sendMessage:async m=>{window.__sent.push(m);return m.type==='sequence-get'?null:undefined;},onMessage:{addListener:f=>listeners.push(f)}}};
+  window.__emit=state=>listeners.forEach(f=>f({type:'sequence-state',state}));
+ },result);
+ await seqPopup.goto(popupURL);
+ await seqPopup.waitForFunction(()=>!document.querySelector('#btnCopy').disabled);
+ assert.equal(await seqPopup.locator('#btnSequence').isVisible(),true);
+ await seqPopup.locator('#btnSequence').click();
+ assert.deepEqual(await seqPopup.evaluate(()=>window.__sent.at(-1)),{type:'sequence-start',tabId:5});
+ await seqPopup.evaluate(()=>window.__emit({tabId:5,count:3,running:true}));
+ assert.equal(await seqPopup.locator('#status').textContent(),'Sequência: 3 telas…');
+ assert.equal(await seqPopup.locator('#btnSequence').getAttribute('aria-label'),'Parar sequência');
+ await seqPopup.locator('#btnSequence').click();
+ assert.deepEqual(await seqPopup.evaluate(()=>window.__sent.at(-1)),{type:'sequence-stop'});
+ await seqPopup.evaluate(()=>window.__emit({tabId:5,count:30,running:false,reason:'missing',file:'quiz-sequencia.md'}));
+ assert.equal(await seqPopup.locator('#status').textContent(),'Sequência: 30 telas baixadas (não há mais botão de avançar)');
+ const seqLayout=await seqPopup.evaluate(()=>document.documentElement.scrollWidth);assert.ok(seqLayout<=400,'toolbar fits with the extra button');
+ await seqPopup.close();
+ console.log('PASS: passive complete extraction, states, retry without reload, clipboard confirmation/failure, Unicode download, reduced motion, 400x560 layout and sequence capture');
  } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});
